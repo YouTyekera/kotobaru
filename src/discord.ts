@@ -24,30 +24,75 @@ export type DiscordConnection = {
  * ======================================================= */
 
 const clientId =
-  import.meta.env
-    .VITE_DISCORD_CLIENT_ID;
+  import.meta.env.VITE_DISCORD_CLIENT_ID;
 
 /* =========================================================
- * Discord SDK
+ * 今Discord Activityの中にいるか判定
  * ======================================================= */
 
-const discordSdk =
-  clientId
-    ? new DiscordSDK(
-        clientId
-      )
-    : null;
+function isDiscordActivity() {
+  /*
+   * Discord Activityとして起動した場合、
+   * DiscordからURLに以下のような情報が渡されます。
+   *
+   * frame_id
+   * instance_id
+   * platform
+   *
+   * 普通のChromeからworkers.devを開いた場合は
+   * これらがありません。
+   */
+
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const params =
+    new URLSearchParams(
+      window.location.search,
+    );
+
+  return (
+    params.has("frame_id") ||
+    params.has("instance_id") ||
+    params.has("platform")
+  );
+}
 
 /* =========================================================
  * Discord接続
  * ======================================================= */
 
-export async function connectDiscord(): Promise<DiscordConnection> {
+export async function connectDiscord():
+  Promise<DiscordConnection> {
+
   /*
-   * 普通のブラウザから開いた場合など、
-   * Application IDがなければDiscord接続しません。
+   * Application IDがない場合
    */
-  if (!discordSdk) {
+  if (!clientId) {
+    console.log(
+      "Discord Application IDがありません。通常ブラウザモードで起動します。",
+    );
+
+    return {
+      user: null,
+      guildId: null,
+      channelId: null,
+    };
+  }
+
+  /*
+   * Discord Activityではなく、
+   * Chromeなどから直接開いた場合。
+   *
+   * Discord SDKには接続せず、
+   * 普通のWebゲームとして起動します。
+   */
+  if (!isDiscordActivity()) {
+    console.log(
+      "通常ブラウザから起動しました。Discord接続を省略します。",
+    );
+
     return {
       user: null,
       guildId: null,
@@ -57,50 +102,61 @@ export async function connectDiscord(): Promise<DiscordConnection> {
 
   try {
     /*
-     * Discord Activity SDK準備完了まで待つ
+     * Discord Activityの中にいることを
+     * 確認してからSDKを生成します。
+     */
+    const discordSdk =
+      new DiscordSDK(clientId);
+
+    /*
+     * Discord SDKの準備完了を待つ
      */
     await discordSdk.ready();
 
     /*
-     * Discordから認証コードを取得
+     * DiscordからOAuth認証コードを取得
      */
-    const {
-      code,
-    } =
-      await discordSdk.commands.authorize(
-        {
-          client_id:
-            clientId,
+    const authorizeResult =
+      await discordSdk.commands.authorize({
+        client_id: clientId,
 
-          response_type:
-            "code",
+        response_type: "code",
 
-          state: "",
+        state: "",
 
-          prompt:
-            "none",
+        prompt: "none",
 
-          scope: [
-            "identify",
-          ],
-        }
+        scope: [
+          "identify",
+        ],
+      });
+
+    const code =
+      authorizeResult.code;
+
+    if (!code) {
+      throw new Error(
+        "Discord認証コードを取得できませんでした。",
       );
+    }
 
     /*
-     * 認証コードを本番サーバーへ送る
+     * 認証コードをRenderへ送ります。
      *
-     * ここが今回変更した部分です。
+     * Discord URL Mappingで
      *
-     * /api/token
-     * ではなく
-     * /api/kotobaru/token
+     * /api
+     * ↓
+     * Render
+     *
+     * とする予定なので、
+     * フロント側では相対URLのままでOKです。
      */
     const tokenResponse =
       await fetch(
         "/api/kotobaru/token",
         {
-          method:
-            "POST",
+          method: "POST",
 
           headers: {
             "Content-Type":
@@ -111,64 +167,69 @@ export async function connectDiscord(): Promise<DiscordConnection> {
             JSON.stringify({
               code,
             }),
-        }
+        },
       );
 
-    if (
-      !tokenResponse.ok
-    ) {
+    if (!tokenResponse.ok) {
+      const errorText =
+        await tokenResponse
+          .text()
+          .catch(() => "");
+
       throw new Error(
-        `OAuth token error: ${tokenResponse.status}`
+        `Discord OAuthに失敗しました: ${tokenResponse.status} ${errorText}`,
       );
     }
 
     const tokenData =
       await tokenResponse.json();
 
-    /*
-     * Discord Activity側へ
-     * Access Tokenを渡して認証完了
-     */
-    const auth =
-      await discordSdk.commands.authenticate(
-        {
-          access_token:
-            tokenData.access_token,
-        }
-      );
-
-    if (!auth) {
+    if (!tokenData.access_token) {
       throw new Error(
-        "Discord authenticate failed"
+        "Discord Access Tokenを取得できませんでした。",
       );
     }
 
     /*
-     * guildId / channelId は
-     * Activity起動コンテキストから取得。
+     * Discord Activity側で認証完了
      */
+    const auth =
+      await discordSdk.commands.authenticate({
+        access_token:
+          tokenData.access_token,
+      });
+
+    if (!auth?.user) {
+      throw new Error(
+        "Discordユーザーを取得できませんでした。",
+      );
+    }
+
+    console.log(
+      "Discord接続成功:",
+      auth.user.username,
+    );
+
     return {
       user:
         auth.user as DiscordUser,
 
       guildId:
-        discordSdk.guildId ??
-        null,
+        discordSdk.guildId ?? null,
 
       channelId:
-        discordSdk.channelId ??
-        null,
+        discordSdk.channelId ?? null,
     };
   } catch (error) {
-    console.warn(
+    /*
+     * Discord接続に失敗しても、
+     * ゲームそのものは遊べる状態を維持します。
+     */
+    console.error(
       "Discordとの接続に失敗しました。",
-      error
+      error,
     );
 
-    /*
-     * Discord接続に失敗しても
-     * ゲーム単体は遊べるようにする。
-     */
     return {
       user: null,
       guildId: null,
