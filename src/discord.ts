@@ -2,6 +2,10 @@ import {
   DiscordSDK,
 } from "@discord/embedded-app-sdk";
 
+/* =========================================================
+ * 型
+ * ======================================================= */
+
 export type DiscordUser = {
   id: string;
   username: string;
@@ -15,15 +19,23 @@ export type DiscordConnection = {
   channelId: string | null;
 };
 
+/* =========================================================
+ * Discord Application ID
+ * ======================================================= */
+
 const clientId =
   import.meta.env.VITE_DISCORD_CLIENT_ID;
 
 /* =========================================================
- * Discord Activity内かどうか確認
+ * Discord Activity内か確認
  * ======================================================= */
 
-function isDiscordActivity(): boolean {
-  if (typeof window === "undefined") {
+export function isDiscordActivityEnvironment():
+  boolean {
+
+  if (
+    typeof window === "undefined"
+  ) {
     return false;
   }
 
@@ -33,13 +45,15 @@ function isDiscordActivity(): boolean {
     );
 
   /*
-   * Discord Activityとして起動された場合は、
-   * frame_id が必ず渡されます。
+   * Discord Activityとして起動された場合、
+   * frame_id がURLに含まれます。
    *
-   * 通常ブラウザでworkers.devを開いた場合には
-   * frame_idが存在しません。
+   * CloudflareのURLを普通のブラウザで開いた場合は
+   * frame_id がありません。
    */
-  return params.has("frame_id");
+  return params.has(
+    "frame_id",
+  );
 }
 
 /* =========================================================
@@ -50,10 +64,15 @@ export async function connectDiscord():
   Promise<DiscordConnection> {
 
   /*
-   * 普通のブラウザなら、
-   * DiscordSDKを「生成すらしない」ことが重要です。
+   * 通常ブラウザの場合。
+   *
+   * DiscordSDKを生成すると
+   * frame_id エラーになるため、
+   * ここで終了します。
    */
-  if (!isDiscordActivity()) {
+  if (
+    !isDiscordActivityEnvironment()
+  ) {
     console.log(
       "通常ブラウザモードで起動しました。",
     );
@@ -65,6 +84,9 @@ export async function connectDiscord():
     };
   }
 
+  /*
+   * Application IDが設定されていない場合
+   */
   if (!clientId) {
     console.warn(
       "VITE_DISCORD_CLIENT_ID が設定されていません。",
@@ -78,36 +100,73 @@ export async function connectDiscord():
   }
 
   try {
-    /*
-     * ここまで来た場合だけDiscordSDKを生成。
-     */
-    const discordSdk =
-      new DiscordSDK(clientId);
+    /* =====================================================
+     * Discord SDK作成
+     * =================================================== */
 
+    const discordSdk =
+      new DiscordSDK(
+        clientId,
+      );
+
+    /*
+     * Discord側の準備完了を待つ
+     */
     await discordSdk.ready();
+
+    /* =====================================================
+     * Discord OAuth認証
+     * =================================================== */
 
     const authorizeResult =
       await discordSdk.commands.authorize({
-        client_id: clientId,
-        response_type: "code",
-        state: "",
-        prompt: "none",
+        client_id:
+          clientId,
+
+        response_type:
+          "code",
+
+        state:
+          "",
+
+        prompt:
+          "none",
+
         scope: [
           "identify",
         ],
       });
 
-    if (!authorizeResult.code) {
+    /*
+     * Discordから認証コードを取得できなかった場合
+     */
+    if (
+      !authorizeResult.code
+    ) {
       throw new Error(
         "Discord認証コードを取得できませんでした。",
       );
     }
 
+    /* =====================================================
+     * Renderへ認証コードを渡す
+     *
+     * Discord URL Mapping：
+     *
+     * /api
+     * ↓
+     * relay-shogi-activity.onrender.com
+     *
+     * となっているため、
+     * 相対URLで問題ありません。
+     * =================================================== */
+
     const tokenResponse =
       await fetch(
         "/api/kotobaru/token",
         {
-          method: "POST",
+          method:
+            "POST",
 
           headers: {
             "Content-Type":
@@ -122,11 +181,19 @@ export async function connectDiscord():
         },
       );
 
-    if (!tokenResponse.ok) {
+    /* =====================================================
+     * OAuth失敗
+     * =================================================== */
+
+    if (
+      !tokenResponse.ok
+    ) {
       const text =
         await tokenResponse
           .text()
-          .catch(() => "");
+          .catch(
+            () => "",
+          );
 
       throw new Error(
         `OAuthエラー: ${tokenResponse.status} ${text}`,
@@ -136,11 +203,20 @@ export async function connectDiscord():
     const tokenData =
       await tokenResponse.json();
 
-    if (!tokenData.access_token) {
+    /*
+     * RenderからAccess Tokenを取得できなかった場合
+     */
+    if (
+      !tokenData.access_token
+    ) {
       throw new Error(
         "アクセストークンを取得できませんでした。",
       );
     }
+
+    /* =====================================================
+     * Discord側で認証完了
+     * =================================================== */
 
     const auth =
       await discordSdk.commands.authenticate({
@@ -148,6 +224,9 @@ export async function connectDiscord():
           tokenData.access_token,
       });
 
+    /*
+     * ユーザー情報が取得できない場合
+     */
     if (!auth?.user) {
       throw new Error(
         "Discordユーザー情報を取得できませんでした。",
@@ -159,9 +238,16 @@ export async function connectDiscord():
       auth.user.username,
     );
 
+    /* =====================================================
+     * 接続情報をApp.tsxへ返す
+     * =================================================== */
+
+    const user =
+      auth.user as DiscordUser;
+
     return {
       user:
-        auth.user as DiscordUser,
+        user,
 
       guildId:
         discordSdk.guildId ??
@@ -173,6 +259,10 @@ export async function connectDiscord():
     };
 
   } catch (error) {
+    /*
+     * Discord認証に失敗しても、
+     * ことばルそのものは遊べるようにします。
+     */
     console.error(
       "Discord接続エラー:",
       error,

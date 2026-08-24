@@ -1,37 +1,1037 @@
-:root { font-family: -apple-system, BlinkMacSystemFont, "Noto Sans JP", "Yu Gothic", sans-serif; color: #f8f8f8; background:#121213; font-synthesis:none; }
-* { box-sizing:border-box; }
-html, body, #root { margin:0; min-height:100%; background:#121213; }
-button, input { font:inherit; }
-.app { min-height:100vh; display:flex; flex-direction:column; }
-.header { height:58px; border-bottom:1px solid #3a3a3c; display:grid; grid-template-columns:48px 1fr 48px; align-items:center; padding:0 8px; }
-.header h1 { margin:0; text-align:center; font-size:28px; letter-spacing:.08em; font-weight:800; }
-.icon-button { border:0; background:transparent; color:#ddd; font-size:22px; cursor:pointer; }
-.game-area { width:min(100%, 520px); margin:0 auto; padding:16px 16px 24px; display:flex; flex-direction:column; align-items:center; }
-.puzzle-label { color:#a7a7aa; font-weight:700; margin-bottom:12px; }
-.board { width:min(350px, 78vw); display:flex; flex-direction:column; gap:6px; }
-.board-row { display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; }
-.tile { aspect-ratio:1; border:2px solid #3a3a3c; display:grid; place-items:center; font-size:clamp(24px, 7vw, 38px); font-weight:800; line-height:1; text-transform:uppercase; }
-.tile:not(:empty) { border-color:#565758; }
-.tile.revealed { animation:flip .55s ease both; }
-.tile.correct { background:#4aa340; border-color:#4aa340; }
-.tile.present { background:#d5b222; border-color:#d5b222; }
-.tile.near { background:#9057a3; border-color:#9057a3; }
-.tile.absent { background:#686868; border-color:#686868; }
-@keyframes flip { 0%{transform:rotateX(0)} 45%{transform:rotateX(90deg)} 55%{transform:rotateX(90deg)} 100%{transform:rotateX(0)} }
-.input-panel { width:min(420px, 100%); margin-top:22px; display:grid; grid-template-columns:1fr 86px; gap:8px; }
-.input-panel input { min-width:0; border:1px solid #565758; background:#202124; color:#fff; border-radius:6px; padding:13px 14px; font-size:18px; outline:none; }
-.input-panel input:focus { border-color:#818384; }
-.input-panel button { border:0; border-radius:6px; background:#4aa340; color:#fff; font-weight:800; cursor:pointer; }
-.legend { width:min(420px,100%); margin-top:14px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px 14px; color:#aaa; font-size:11px; }
-.legend span { display:flex; align-items:center; gap:6px; white-space:nowrap; }
-.legend-swatch { width:12px; height:12px; border-radius:2px; flex:0 0 auto; }
-.legend-swatch.correct { background:#4aa340; }
-.legend-swatch.present { background:#d5b222; }
-.legend-swatch.near { background:#9057a3; }
-.legend-swatch.absent { background:#686868; }
-.toast { margin-top:14px; background:#f8f8f8; color:#121213; border-radius:6px; padding:9px 14px; font-weight:700; }
-.result-card { margin-top:18px; padding:14px 18px; border-radius:8px; background:#202124; display:flex; flex-direction:column; gap:5px; align-items:center; }
-.result-card span { color:#c6c6c8; font-size:14px; }
-.hint { color:#8d8d91; font-size:12px; margin:12px 0 0; }
-.loading { margin:auto; color:#aaa; }
-@media (max-height:700px) { .header{height:48px}.game-area{padding-top:8px}.board{width:min(310px,68vh)}.input-panel{margin-top:12px} }
+:root {
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Noto Sans JP",
+    "Yu Gothic",
+    sans-serif;
+
+  color: #f8f8f8;
+  background: #121213;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background: #121213;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  touch-action: manipulation;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* =========================================================
+ * Header
+ * ======================================================= */
+
+.header {
+  height: 58px;
+
+  border-bottom:
+    1px solid #3a3a3c;
+
+  display: grid;
+
+  grid-template-columns:
+    48px
+    1fr
+    48px;
+
+  align-items: center;
+
+  padding:
+    0
+    8px;
+}
+
+.header h1 {
+  margin: 0;
+
+  text-align: center;
+
+  font-size: 28px;
+
+  letter-spacing:
+    .08em;
+
+  font-weight: 800;
+}
+
+.icon-button {
+  border: 0;
+
+  background:
+    transparent;
+
+  color: #ddd;
+
+  font-size: 22px;
+
+  cursor: pointer;
+}
+
+/* =========================================================
+ * Game
+ * ======================================================= */
+
+.game-area {
+  width:
+    min(
+      100%,
+      620px
+    );
+
+  margin:
+    0 auto;
+
+  padding:
+    16px
+    16px
+    30px;
+
+  display: flex;
+
+  flex-direction:
+    column;
+
+  align-items:
+    center;
+}
+
+.puzzle-label {
+  color: #a7a7aa;
+
+  font-weight: 700;
+
+  margin-bottom:
+    12px;
+}
+
+/* =========================================================
+ * Board
+ * ======================================================= */
+
+.board {
+  width:
+    min(
+      350px,
+      78vw
+    );
+
+  display: flex;
+
+  flex-direction:
+    column;
+
+  gap: 6px;
+
+  cursor: text;
+}
+
+.board-row {
+  display: grid;
+
+  grid-template-columns:
+    repeat(
+      5,
+      1fr
+    );
+
+  gap: 6px;
+}
+
+.tile {
+  aspect-ratio: 1;
+
+  border:
+    2px solid #3a3a3c;
+
+  display: grid;
+
+  place-items:
+    center;
+
+  font-size:
+    clamp(
+      24px,
+      7vw,
+      38px
+    );
+
+  font-weight: 800;
+
+  line-height: 1;
+}
+
+.tile:not(:empty) {
+  border-color:
+    #565758;
+}
+
+.tile.revealed {
+  animation:
+    flip
+    .55s
+    ease
+    both;
+}
+
+/* 指定色 */
+
+.tile.correct {
+  background:
+    #4aa340;
+
+  border-color:
+    #4aa340;
+}
+
+.tile.present {
+  background:
+    #d5b222;
+
+  border-color:
+    #d5b222;
+}
+
+.tile.near {
+  background:
+    #9057a3;
+
+  border-color:
+    #9057a3;
+}
+
+.tile.absent {
+  background:
+    #686868;
+
+  border-color:
+    #686868;
+}
+
+@keyframes flip {
+  0% {
+    transform:
+      rotateX(0);
+  }
+
+  45% {
+    transform:
+      rotateX(90deg);
+  }
+
+  55% {
+    transform:
+      rotateX(90deg);
+  }
+
+  100% {
+    transform:
+      rotateX(0);
+  }
+}
+
+/* =========================================================
+ * Input
+ * ======================================================= */
+
+.input-panel {
+  width:
+    min(
+      420px,
+      100%
+    );
+
+  margin-top:
+    22px;
+
+  display: grid;
+
+  grid-template-columns:
+    1fr
+    86px;
+
+  gap: 8px;
+}
+
+.input-panel input {
+  min-width: 0;
+
+  border:
+    1px solid #565758;
+
+  background:
+    #202124;
+
+  color: #fff;
+
+  border-radius:
+    6px;
+
+  padding:
+    13px
+    14px;
+
+  font-size:
+    18px;
+
+  outline: none;
+}
+
+.input-panel input:focus {
+  border-color:
+    #818384;
+}
+
+.input-panel button {
+  border: 0;
+
+  border-radius:
+    6px;
+
+  background:
+    #4aa340;
+
+  color: #fff;
+
+  font-weight: 800;
+
+  cursor: pointer;
+}
+
+/* =========================================================
+ * Legend
+ * ======================================================= */
+
+.legend {
+  width:
+    min(
+      420px,
+      100%
+    );
+
+  margin-top:
+    14px;
+
+  display: grid;
+
+  grid-template-columns:
+    repeat(
+      2,
+      minmax(
+        0,
+        1fr
+      )
+    );
+
+  gap:
+    6px
+    14px;
+
+  color: #aaa;
+
+  font-size:
+    11px;
+}
+
+.legend span {
+  display: flex;
+
+  align-items:
+    center;
+
+  gap: 6px;
+
+  white-space:
+    nowrap;
+}
+
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+
+  border-radius:
+    2px;
+
+  flex:
+    0
+    0
+    auto;
+}
+
+.legend-swatch.correct {
+  background:
+    #4aa340;
+}
+
+.legend-swatch.present {
+  background:
+    #d5b222;
+}
+
+.legend-swatch.near {
+  background:
+    #9057a3;
+}
+
+.legend-swatch.absent {
+  background:
+    #686868;
+}
+
+/* =========================================================
+ * Messages
+ * ======================================================= */
+
+.toast {
+  margin-top:
+    14px;
+
+  background:
+    #f8f8f8;
+
+  color:
+    #121213;
+
+  border-radius:
+    6px;
+
+  padding:
+    9px
+    14px;
+
+  font-weight: 700;
+}
+
+.result-card {
+  margin-top:
+    18px;
+
+  padding:
+    14px
+    18px;
+
+  border-radius:
+    8px;
+
+  background:
+    #202124;
+
+  display: flex;
+
+  flex-direction:
+    column;
+
+  gap: 5px;
+
+  align-items:
+    center;
+}
+
+.result-card span {
+  color:
+    #c6c6c8;
+
+  font-size:
+    14px;
+}
+
+.save-status {
+  margin-top:
+    6px;
+
+  font-size:
+    12px !important;
+}
+
+.hint {
+  color:
+    #8d8d91;
+
+  font-size:
+    12px;
+
+  margin:
+    10px
+    0
+    0;
+}
+
+.loading {
+  margin: auto;
+  color: #aaa;
+}
+
+/* =========================================================
+ * 五十音キーボード
+ * ======================================================= */
+
+.kana-keyboard {
+  width:
+    min(
+      560px,
+      100%
+    );
+
+  margin-top:
+    22px;
+
+  padding-top:
+    14px;
+
+  border-top:
+    1px solid #2d2d2f;
+}
+
+.keyboard-title-row {
+  display: flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    space-between;
+
+  margin-bottom:
+    10px;
+
+  color:
+    #bcbcc0;
+
+  font-size:
+    12px;
+
+  font-weight:
+    700;
+}
+
+.keyboard-toggle {
+  border:
+    1px solid #4b4b4e;
+
+  border-radius:
+    6px;
+
+  background:
+    #202124;
+
+  color:
+    #ddd;
+
+  padding:
+    5px
+    9px;
+
+  cursor: pointer;
+
+  font-size:
+    11px;
+}
+
+.basic-keyboard {
+  display: flex;
+
+  flex-direction:
+    column;
+
+  gap: 4px;
+}
+
+.kana-key-row {
+  display: grid;
+
+  grid-template-columns:
+    repeat(
+      10,
+      minmax(
+        0,
+        1fr
+      )
+    );
+
+  gap: 4px;
+}
+
+.extra-keyboard {
+  display: grid;
+
+  grid-template-columns:
+    repeat(
+      10,
+      minmax(
+        0,
+        1fr
+      )
+    );
+
+  gap: 4px;
+}
+
+.kana-key {
+  min-width: 0;
+
+  height: 42px;
+
+  border:
+    1px solid #4a4a4d;
+
+  border-radius:
+    4px;
+
+  background:
+    #d3d6da;
+
+  color:
+    #121213;
+
+  font-weight: 700;
+
+  cursor: pointer;
+
+  position: relative;
+
+  display: flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
+}
+
+.kana-key.blank {
+  visibility: hidden;
+}
+
+.kana-key:hover {
+  filter:
+    brightness(
+      1.08
+    );
+}
+
+.kana-key.key-absent {
+  background:
+    #686868;
+
+  border-color:
+    #686868;
+
+  color: #fff;
+}
+
+.kana-key.key-present {
+  background:
+    #d5b222;
+
+  border-color:
+    #d5b222;
+
+  color: #fff;
+}
+
+.kana-key.key-correct {
+  background:
+    #4aa340;
+
+  border-color:
+    #4aa340;
+
+  color: #fff;
+}
+
+/*
+ * 紫は位置依存なので
+ * キー全体を紫にはしません。
+ *
+ * 紫ヒントしかない文字は
+ * 紫の枠だけ付けます。
+ */
+.kana-key.key-has-near:not(
+  .key-absent
+):not(
+  .key-present
+):not(
+  .key-correct
+) {
+  border:
+    2px solid #9057a3;
+
+  background:
+    #d3d6da;
+}
+
+.kana-key-char {
+  line-height: 1;
+}
+
+.near-position-list {
+  position:
+    absolute;
+
+  right: 2px;
+  bottom: 2px;
+
+  display: flex;
+
+  gap: 1px;
+}
+
+.near-position-badge {
+  width: 12px;
+  height: 12px;
+
+  border-radius:
+    50%;
+
+  background:
+    #9057a3;
+
+  color:
+    #fff;
+
+  font-size:
+    8px;
+
+  line-height:
+    12px;
+
+  text-align:
+    center;
+
+  font-weight:
+    800;
+}
+
+.keyboard-actions {
+  display: grid;
+
+  grid-template-columns:
+    1fr
+    1fr;
+
+  gap:
+    8px;
+
+  margin-top:
+    8px;
+}
+
+.keyboard-actions button {
+  border:
+    1px solid #4a4a4d;
+
+  border-radius:
+    6px;
+
+  padding:
+    9px;
+
+  background:
+    #2c2d2f;
+
+  color:
+    #fff;
+
+  cursor:
+    pointer;
+
+  font-weight:
+    700;
+}
+
+.keyboard-actions
+.keyboard-submit {
+  background:
+    #4aa340;
+
+  border-color:
+    #4aa340;
+}
+
+.near-key-help {
+  color:
+    #77777c;
+
+  font-size:
+    10px;
+
+  text-align:
+    center;
+
+  margin:
+    7px
+    0
+    0;
+}
+
+/* =========================================================
+ * Modal
+ * ======================================================= */
+
+.modal-backdrop {
+  position: fixed;
+
+  inset: 0;
+
+  z-index: 100;
+
+  background:
+    rgba(
+      0,
+      0,
+      0,
+      .68
+    );
+
+  display: grid;
+
+  place-items:
+    center;
+
+  padding:
+    20px;
+}
+
+.modal {
+  width:
+    min(
+      440px,
+      100%
+    );
+
+  max-height:
+    85vh;
+
+  overflow-y:
+    auto;
+
+  background:
+    #202124;
+
+  border:
+    1px solid #3a3a3c;
+
+  border-radius:
+    10px;
+
+  padding:
+    22px;
+
+  box-shadow:
+    0
+    15px
+    50px
+    rgba(
+      0,
+      0,
+      0,
+      .5
+    );
+}
+
+.modal h2 {
+  margin:
+    0
+    0
+    15px;
+
+  text-align:
+    center;
+}
+
+.modal p {
+  color:
+    #c5c5c8;
+
+  line-height:
+    1.65;
+}
+
+.modal > button {
+  width: 100%;
+
+  margin-top:
+    16px;
+
+  border: 0;
+
+  border-radius:
+    6px;
+
+  padding:
+    10px;
+
+  background:
+    #4aa340;
+
+  color:
+    #fff;
+
+  font-weight:
+    800;
+
+  cursor:
+    pointer;
+}
+
+.help-row {
+  display: flex;
+
+  align-items:
+    center;
+
+  gap:
+    12px;
+
+  margin:
+    9px
+    0;
+
+  color:
+    #ddd;
+
+  font-size:
+    13px;
+}
+
+.help-tile {
+  width: 38px;
+  height: 38px;
+
+  border-radius:
+    3px;
+
+  display: grid;
+
+  place-items:
+    center;
+
+  color: #fff;
+
+  font-weight:
+    800;
+
+  flex:
+    0
+    0
+    auto;
+}
+
+.help-tile.correct {
+  background:
+    #4aa340;
+}
+
+.help-tile.present {
+  background:
+    #d5b222;
+}
+
+.help-tile.near {
+  background:
+    #9057a3;
+}
+
+.help-tile.absent {
+  background:
+    #686868;
+}
+
+.settings-note {
+  font-size:
+    12px;
+}
+
+/* =========================================================
+ * Responsive
+ * ======================================================= */
+
+@media (
+  max-width:
+    540px
+) {
+  .game-area {
+    padding-left:
+      10px;
+
+    padding-right:
+      10px;
+  }
+
+  .kana-key {
+    height:
+      38px;
+
+    font-size:
+      13px;
+  }
+
+  .extra-keyboard {
+    grid-template-columns:
+      repeat(
+        5,
+        minmax(
+          0,
+          1fr
+        )
+      );
+  }
+
+  .near-position-badge {
+    width: 11px;
+    height: 11px;
+
+    line-height:
+      11px;
+
+    font-size:
+      7px;
+  }
+}
+
+@media (
+  max-height:
+    700px
+) {
+  .header {
+    height: 48px;
+  }
+
+  .game-area {
+    padding-top:
+      8px;
+  }
+
+  .board {
+    width:
+      min(
+        310px,
+        68vh
+      );
+  }
+
+  .input-panel {
+    margin-top:
+      12px;
+  }
+}

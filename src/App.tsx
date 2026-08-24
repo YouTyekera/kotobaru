@@ -1,11 +1,13 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
 import {
   connectDiscord,
+  isDiscordActivityEnvironment,
   type DiscordUser,
 } from './discord';
 
@@ -17,6 +19,7 @@ import {
   tileStateToEmoji,
   toKatakana,
   type EvaluatedTile,
+  type TileState,
 } from './game';
 
 /* =========================================================
@@ -35,27 +38,177 @@ type SavedGame = {
   won: boolean;
 };
 
+type KeyUsage = {
+  used: boolean;
+
+  /*
+   * キー全体に付ける状態。
+   *
+   * nearは位置依存なので
+   * ここには入れません。
+   */
+  state:
+    | 'correct'
+    | 'present'
+    | 'absent'
+    | null;
+
+  /*
+   * 薄紫になった位置。
+   *
+   * 例：
+   * [1, 3]
+   */
+  nearPositions:
+    number[];
+};
+
+type DiscordStatus =
+  | 'browser'
+  | 'connecting'
+  | 'connected'
+  | 'error';
+
+type SaveStatus =
+  | 'idle'
+  | 'saving'
+  | 'saved'
+  | 'error';
+
 const ROWS = 6;
 
 /* =========================================================
- * カタカナ → ひらがな
- *
- * ゲーム内部ではカタカナに統一して判定しますが、
- * 盤面では日本語として親しみやすいひらがなを表示します。
+ * 五十音キーボード
  * ======================================================= */
 
-function toHiragana(value: string) {
+const BASIC_KEYS:
+  (string | null)[][] = [
+  [
+    'あ',
+    'か',
+    'さ',
+    'た',
+    'な',
+    'は',
+    'ま',
+    'や',
+    'ら',
+    'わ',
+  ],
+  [
+    'い',
+    'き',
+    'し',
+    'ち',
+    'に',
+    'ひ',
+    'み',
+    null,
+    'り',
+    null,
+  ],
+  [
+    'う',
+    'く',
+    'す',
+    'つ',
+    'ぬ',
+    'ふ',
+    'む',
+    'ゆ',
+    'る',
+    'ん',
+  ],
+  [
+    'え',
+    'け',
+    'せ',
+    'て',
+    'ね',
+    'へ',
+    'め',
+    null,
+    'れ',
+    null,
+  ],
+  [
+    'お',
+    'こ',
+    'そ',
+    'と',
+    'の',
+    'ほ',
+    'も',
+    'よ',
+    'ろ',
+    'を',
+  ],
+];
+
+const EXTRA_KEYS =
+  [
+    'が',
+    'ぎ',
+    'ぐ',
+    'げ',
+    'ご',
+
+    'ざ',
+    'じ',
+    'ず',
+    'ぜ',
+    'ぞ',
+
+    'だ',
+    'ぢ',
+    'づ',
+    'で',
+    'ど',
+
+    'ば',
+    'び',
+    'ぶ',
+    'べ',
+    'ぼ',
+
+    'ぱ',
+    'ぴ',
+    'ぷ',
+    'ぺ',
+    'ぽ',
+
+    'ぁ',
+    'ぃ',
+    'ぅ',
+    'ぇ',
+    'ぉ',
+
+    'ゃ',
+    'ゅ',
+    'ょ',
+    'っ',
+    'ー',
+  ];
+
+/* =========================================================
+ * カタカナ → ひらがな
+ * ======================================================= */
+
+function toHiragana(
+  value: string,
+) {
   return value.replace(
     /[ァ-ヶ]/g,
     (char) =>
       String.fromCharCode(
-        char.charCodeAt(0) - 0x60,
+        char.charCodeAt(0) -
+          0x60,
       ),
   );
 }
 
 /* =========================================================
- * 出題CSV読み込み
+ * CSV
  * ======================================================= */
 
 function parseAnswerCsv(
@@ -63,26 +216,32 @@ function parseAnswerCsv(
 ): AnswerEntry[] {
   return text
     .split(/\r?\n/)
-    .map((line) => line.trim())
+    .map(
+      (line) =>
+        line.trim(),
+    )
     .filter(Boolean)
     .map((line) => {
       const comma =
         line.indexOf(',');
 
-      // カンマがない場合
       if (comma < 0) {
         return {
           display: line,
+
           reading:
-            toKatakana(line),
+            toKatakana(
+              line,
+            ),
         };
       }
 
-      // カンマより前：漢字などの表示名
-      // カンマより後：読み
       return {
         display:
-          line.slice(0, comma),
+          line.slice(
+            0,
+            comma,
+          ),
 
         reading:
           toKatakana(
@@ -101,7 +260,7 @@ function parseAnswerCsv(
 }
 
 /* =========================================================
- * 盤面の1行
+ * 盤面1行
  * ======================================================= */
 
 function BoardRow({
@@ -115,81 +274,173 @@ function BoardRow({
   active: boolean;
   input: string;
 }) {
-  /*
-   * 回答済みならguessを表示。
-   * 現在入力中の行ならinputを表示。
-   */
-  const chars = guess
-    ? splitJapanese(guess)
-    : active
-      ? splitJapanese(input)
-      : [];
+  const chars =
+    guess
+      ? splitJapanese(
+          guess,
+        )
+      : active
+        ? splitJapanese(
+            input,
+          )
+        : [];
 
-  /*
-   * 回答済みの行だけ色判定します。
-   */
-  const evaluated = guess
-    ? evaluateGuess(
-        answer,
-        guess,
-      )
-    : null;
+  const evaluated =
+    guess
+      ? evaluateGuess(
+          answer,
+          guess,
+        )
+      : null;
 
   return (
     <div className="board-row">
       {Array.from({
         length: 5,
-      }).map((_, index) => {
-        const tile =
-          evaluated?.[
-            index
-          ] as
-            | EvaluatedTile
-            | undefined;
+      }).map(
+        (_, index) => {
+          const tile =
+            evaluated?.[
+              index
+            ] as
+              | EvaluatedTile
+              | undefined;
 
-        const character =
-          chars[index]
-            ? toHiragana(
-                chars[index],
-              )
-            : '';
+          const character =
+            chars[index]
+              ? toHiragana(
+                  chars[index],
+                )
+              : '';
 
-        return (
-          <div
-            key={index}
-            className={[
-              'tile',
-              tile?.state ?? '',
-              guess
-                ? 'revealed'
-                : '',
-            ]
-              .filter(Boolean)
-              .join(' ')}
-            style={
-              guess
-                ? {
-                    animationDelay:
-                      `${index * 110}ms`,
-                  }
-                : undefined
-            }
-          >
-            {character}
-          </div>
-        );
-      })}
+          return (
+            <div
+              key={index}
+              className={[
+                'tile',
+                tile?.state ??
+                  '',
+                guess
+                  ? 'revealed'
+                  : '',
+              ]
+                .filter(
+                  Boolean,
+                )
+                .join(' ')}
+              style={
+                guess
+                  ? {
+                      animationDelay:
+                        `${
+                          index *
+                          110
+                        }ms`,
+                    }
+                  : undefined
+              }
+            >
+              {character}
+            </div>
+          );
+        },
+      )}
     </div>
   );
 }
 
 /* =========================================================
- * メイン画面
+ * 使用済み文字キーボード
+ * ======================================================= */
+
+function KanaKey({
+  char,
+  usage,
+  onPress,
+}: {
+  char: string;
+  usage?: KeyUsage;
+  onPress:
+    (
+      char: string,
+    ) => void;
+}) {
+  const classes = [
+    'kana-key',
+
+    usage?.state
+      ? `key-${usage.state}`
+      : '',
+
+    usage?.used
+      ? 'key-used'
+      : '',
+
+    usage
+      ?.nearPositions
+      .length
+      ? 'key-has-near'
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <button
+      type="button"
+      className={classes}
+      data-no-focus="true"
+      onClick={() =>
+        onPress(char)
+      }
+      aria-label={
+        `${char}を入力`
+      }
+    >
+      <span className="kana-key-char">
+        {char}
+      </span>
+
+      {!!usage
+        ?.nearPositions
+        .length && (
+        <span className="near-position-list">
+          {usage
+            .nearPositions
+            .map(
+              (
+                position,
+              ) => (
+                <span
+                  key={
+                    position
+                  }
+                  className="near-position-badge"
+                >
+                  {
+                    position
+                  }
+                </span>
+              ),
+            )}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/* =========================================================
+ * App
  * ======================================================= */
 
 export default function App() {
+  const inputRef =
+    useRef<HTMLInputElement>(
+      null,
+    );
+
   /* -------------------------
-   * 辞書・問題
+   * 辞書
    * ----------------------- */
 
   const [
@@ -207,7 +458,7 @@ export default function App() {
   >(new Set());
 
   /* -------------------------
-   * ゲーム状態
+   * ゲーム
    * ----------------------- */
 
   const [
@@ -237,44 +488,66 @@ export default function App() {
     setWon,
   ] = useState(false);
 
-  /*
-   * 日本語IMEで変換中かどうか。
-   *
-   * 例：
-   * tamagoyaki
-   * ↓
-   * たまごやき
-   *
-   * 変換途中にEnterを押しても、
-   * 回答を送信しないために使用します。
-   */
   const [
     isComposing,
     setIsComposing,
   ] = useState(false);
 
+  const [
+    showExtraKeys,
+    setShowExtraKeys,
+  ] = useState(false);
+
+  const [
+    showHelp,
+    setShowHelp,
+  ] = useState(false);
+
+  const [
+    showSettings,
+    setShowSettings,
+  ] = useState(false);
+
   /* -------------------------
-   * Discord情報
+   * Discord
    * ----------------------- */
 
   const [
     discordUser,
     setDiscordUser,
   ] =
-    useState<DiscordUser | null>(
-      null,
-    );
+    useState<
+      DiscordUser | null
+    >(null);
 
   const [
     guildId,
     setGuildId,
   ] =
-    useState<string | null>(
-      null,
+    useState<
+      string | null
+    >(null);
+
+  const [
+    discordStatus,
+    setDiscordStatus,
+  ] =
+    useState<DiscordStatus>(
+      isDiscordActivityEnvironment()
+        ? 'connecting'
+        : 'browser',
+    );
+
+  const [
+    saveStatus,
+    setSaveStatus,
+  ] =
+    useState<SaveStatus>(
+      'idle',
     );
 
   /* =========================================================
-   * 今日の問題
+   * 今日
    * ======================================================= */
 
   const number =
@@ -291,92 +564,70 @@ export default function App() {
         ]
       : null;
 
-  /*
-   * 内部の正解はカタカナ。
-   *
-   * 例：
-   * タマゴヤキ
-   */
   const answer =
-    answerEntry?.reading ??
-    '';
+    answerEntry
+      ?.reading ?? '';
 
   /* =========================================================
-   * 起動時：
-   * ・入力辞書
-   * ・問題辞書
-   * ・Discord情報
-   * を読み込みます。
+   * 辞書を読み込む
+   *
+   * Discord接続とは分離します。
+   *
+   * Renderが起きるのを待っている間も
+   * ゲーム画面は先に表示できます。
    * ======================================================= */
 
   useEffect(() => {
     Promise.all([
       fetch(
         './data/A_data_new.csv',
-      ).then((response) =>
-        response.text(),
+      ).then(
+        (response) =>
+          response.text(),
       ),
 
       fetch(
         './data/Q_fil_ippan.csv',
-      ).then((response) =>
-        response.text(),
+      ).then(
+        (response) =>
+          response.text(),
       ),
-
-      connectDiscord(),
     ])
       .then(
         ([
           dictText,
           answerText,
-          discord,
         ]) => {
-          /*
-           * 入力可能辞書をSetにします。
-           *
-           * Setにすると
-           * 「この単語は辞書にあるか」
-           * を高速に確認できます。
-           */
           const words =
             dictText
               .split(/\r?\n/)
-              .map((word) =>
-                toKatakana(
-                  word.trim(),
-                ),
+              .map(
+                (word) =>
+                  toKatakana(
+                    word.trim(),
+                  ),
               )
-              .filter(Boolean);
+              .filter(
+                Boolean,
+              );
 
           setDictionary(
-            new Set(words),
+            new Set(
+              words,
+            ),
           );
 
-          /*
-           * 出題候補
-           */
           setAnswers(
             parseAnswerCsv(
               answerText,
             ),
-          );
-
-          /*
-           * Discordのユーザー情報
-           */
-          setDiscordUser(
-            discord.user,
-          );
-
-          setGuildId(
-            discord.guildId,
           );
         },
       )
       .catch(
         (error) => {
           console.error(
-            'ことばルの初期化に失敗しました。',
+            '辞書読み込みエラー:',
             error,
           );
 
@@ -388,8 +639,100 @@ export default function App() {
   }, []);
 
   /* =========================================================
-   * 今日すでに遊んでいた場合、
-   * localStorageから盤面を復元
+   * Discord接続
+   * ======================================================= */
+
+  useEffect(() => {
+    if (
+      !isDiscordActivityEnvironment()
+    ) {
+      setDiscordStatus(
+        'browser',
+      );
+
+      return;
+    }
+
+    setDiscordStatus(
+      'connecting',
+    );
+
+    connectDiscord()
+      .then(
+        async (
+          discord,
+        ) => {
+          setDiscordUser(
+            discord.user,
+          );
+
+          setGuildId(
+            discord.guildId,
+          );
+
+          if (
+            discord.user &&
+            discord.guildId
+          ) {
+            setDiscordStatus(
+              'connected',
+            );
+
+            /*
+             * HTTP通信を1回送ることで
+             * Renderが眠っていれば起こします。
+             *
+             * 同時に「昨日の結果」が
+             * 未投稿なら投稿します。
+             */
+            fetch(
+              '/api/kotobaru/awake',
+              {
+                method:
+                  'POST',
+
+                headers: {
+                  'Content-Type':
+                    'application/json',
+                },
+
+                body:
+                  JSON.stringify({
+                    guildId:
+                      discord.guildId,
+                  }),
+              },
+            ).catch(
+              (error) => {
+                console.warn(
+                  'Render起動確認に失敗:',
+                  error,
+                );
+              },
+            );
+          } else {
+            setDiscordStatus(
+              'error',
+            );
+          }
+        },
+      )
+      .catch(
+        (error) => {
+          console.error(
+            'Discord接続エラー:',
+            error,
+          );
+
+          setDiscordStatus(
+            'error',
+          );
+        },
+      );
+  }, []);
+
+  /* =========================================================
+   * 保存済みゲーム復元
    * ======================================================= */
 
   useEffect(() => {
@@ -412,11 +755,6 @@ export default function App() {
           raw,
         ) as SavedGame;
 
-      /*
-       * 今日のデータだけ復元します。
-       *
-       * 昨日のデータだった場合は無視します。
-       */
       if (
         saved.date ===
         dateKey
@@ -434,10 +772,6 @@ export default function App() {
         );
       }
     } catch {
-      /*
-       * localStorageが壊れていても
-       * ゲーム自体は起動させます。
-       */
       console.warn(
         '保存済みゲームデータを読み込めませんでした。',
       );
@@ -448,53 +782,165 @@ export default function App() {
   ]);
 
   /* =========================================================
-   * 端末内に今日の盤面を保存
+   * localStorage
    * ======================================================= */
 
   const save = (
-    nextGuesses: string[],
-    nextFinished: boolean,
-    nextWon: boolean,
+    nextGuesses:
+      string[],
+    nextFinished:
+      boolean,
+    nextWon:
+      boolean,
   ) => {
-    const data: SavedGame =
-      {
-        date: dateKey,
-        guesses:
-          nextGuesses,
-        finished:
-          nextFinished,
-        won: nextWon,
-      };
+    const data:
+      SavedGame = {
+      date:
+        dateKey,
+
+      guesses:
+        nextGuesses,
+
+      finished:
+        nextFinished,
+
+      won:
+        nextWon,
+    };
 
     localStorage.setItem(
       'kotobaru-today',
-      JSON.stringify(data),
+      JSON.stringify(
+        data,
+      ),
     );
   };
 
   /* =========================================================
-   * ゲーム終了時にDiscord側へ結果を送る
+   * 使用済み文字情報
+   * ======================================================= */
+
+  const keyUsage =
+    useMemo(() => {
+      const map =
+        new Map<
+          string,
+          KeyUsage
+        >();
+
+      const priority:
+        Record<
+          Exclude<
+            TileState,
+            'near'
+          >,
+          number
+        > = {
+        absent: 1,
+        present: 2,
+        correct: 3,
+      };
+
+      for (
+        const guess of
+        guesses
+      ) {
+        const evaluated =
+          evaluateGuess(
+            answer,
+            guess,
+          );
+
+        evaluated.forEach(
+          (
+            tile,
+            index,
+          ) => {
+            const key =
+              toKatakana(
+                tile.char,
+              );
+
+            const current =
+              map.get(
+                key,
+              ) ?? {
+                used: false,
+                state: null,
+                nearPositions:
+                  [],
+              };
+
+            current.used =
+              true;
+
+            if (
+              tile.state ===
+              'near'
+            ) {
+              const position =
+                index + 1;
+
+              if (
+                !current
+                  .nearPositions
+                  .includes(
+                    position,
+                  )
+              ) {
+                current
+                  .nearPositions
+                  .push(
+                    position,
+                  );
+              }
+            } else {
+              const nextState =
+                tile.state;
+
+              if (
+                !current.state ||
+                priority[
+                  nextState
+                ] >
+                  priority[
+                    current
+                      .state
+                  ]
+              ) {
+                current.state =
+                  nextState;
+              }
+            }
+
+            map.set(
+              key,
+              current,
+            );
+          },
+        );
+      }
+
+      return map;
+    }, [
+      guesses,
+      answer,
+    ]);
+
+  /* =========================================================
+   * Discord結果保存
    *
-   * 単語そのものは送信しません。
-   *
-   * 送るもの：
-   * ・Discordユーザー
-   * ・問題番号
-   * ・日付
-   * ・何回で成功したか
-   * ・色のパターン
+   * Render起動直後などを考えて
+   * 数回再試行します。
    * ======================================================= */
 
   const submitResult =
     async (
-      nextGuesses: string[],
-      didWin: boolean,
+      nextGuesses:
+        string[],
+      didWin:
+        boolean,
     ) => {
-      /*
-       * ブラウザ単体で開いている場合など、
-       * Discord情報がなければ
-       * 送信しません。
-       */
       if (
         !discordUser ||
         !guildId
@@ -502,15 +948,6 @@ export default function App() {
         return;
       }
 
-      /*
-       * Discord共有用の
-       * 色パターンを生成。
-       *
-       * 緑   🟩
-       * 黄   🟨
-       * 紫   🟪
-       * 灰   ⬛
-       */
       const pattern =
         nextGuesses.map(
           (guess) =>
@@ -527,82 +964,118 @@ export default function App() {
               .join(''),
         );
 
-      try {
-        const response =
-          await fetch(
-            '/api/kotobaru/result',
-            {
-              method:
-                'POST',
+      const payload = {
+        guildId,
 
-              headers: {
-                'Content-Type':
-                  'application/json',
+        userId:
+          discordUser.id,
+
+        displayName:
+          discordUser
+            .global_name ||
+          discordUser
+            .username,
+
+        puzzleNumber:
+          number,
+
+        date:
+          dateKey,
+
+        attempts:
+          didWin
+            ? nextGuesses
+                .length
+            : null,
+
+        won:
+          didWin,
+
+        pattern,
+      };
+
+      setSaveStatus(
+        'saving',
+      );
+
+      /*
+       * 最大5回。
+       */
+      for (
+        let attempt = 1;
+        attempt <= 5;
+        attempt += 1
+      ) {
+        try {
+          const response =
+            await fetch(
+              '/api/kotobaru/result',
+              {
+                method:
+                  'POST',
+
+                headers: {
+                  'Content-Type':
+                    'application/json',
+                },
+
+                body:
+                  JSON.stringify(
+                    payload,
+                  ),
               },
+            );
 
-              body:
-                JSON.stringify(
-                  {
-                    guildId,
+          if (
+            response.ok
+          ) {
+            setSaveStatus(
+              'saved',
+            );
 
-                    userId:
-                      discordUser.id,
+            return;
+          }
 
-                    displayName:
-                      discordUser.global_name ||
-                      discordUser.username,
-
-                    puzzleNumber:
-                      number,
-
-                    date:
-                      dateKey,
-
-                    attempts:
-                      didWin
-                        ? nextGuesses.length
-                        : null,
-
-                    won:
-                      didWin,
-
-                    pattern,
-                  },
-                ),
-            },
-          );
-
-        if (!response.ok) {
           console.warn(
-            '結果をDiscordへ保存できませんでした。',
+            `結果保存失敗 ${attempt}/5`,
             await response
               .text()
               .catch(
                 () => '',
               ),
           );
+        } catch (
+          error
+        ) {
+          console.warn(
+            `結果送信失敗 ${attempt}/5`,
+            error,
+          );
         }
-      } catch (error) {
-        /*
-         * Discordへの保存に失敗しても、
-         * ゲーム結果はlocalStorageに残ります。
-         */
-        console.warn(
-          '結果送信に失敗しました。ゲーム結果は端末内には保存されています。',
-          error,
-        );
+
+        if (
+          attempt < 5
+        ) {
+          await new Promise(
+            (resolve) =>
+              setTimeout(
+                resolve,
+                4000,
+              ),
+          );
+        }
       }
+
+      setSaveStatus(
+        'error',
+      );
     };
 
   /* =========================================================
-   * 「決定」を押したときの処理
+   * 回答
    * ======================================================= */
 
   const submit = () => {
-    /*
-     * 問題未読み込み、
-     * またはゲーム終了後なら何もしません。
-     */
     if (
       !answer ||
       finished
@@ -610,20 +1083,11 @@ export default function App() {
       return;
     }
 
-    /*
-     * 入力をカタカナに統一。
-     *
-     * 例：
-     * たまごやき
-     * ↓
-     * タマゴヤキ
-     */
     const normalized =
-      toKatakana(input);
+      toKatakana(
+        input,
+      );
 
-    /*
-     * 5文字でなければ拒否。
-     */
     if (
       splitJapanese(
         normalized,
@@ -633,12 +1097,11 @@ export default function App() {
         '5文字入力してください',
       );
 
+      focusInput();
+
       return;
     }
 
-    /*
-     * 辞書にない単語なら拒否。
-     */
     if (
       !dictionary.has(
         normalized,
@@ -648,28 +1111,20 @@ export default function App() {
         '辞書にないことばです',
       );
 
+      focusInput();
+
       return;
     }
 
-    /*
-     * 回答を追加。
-     */
     const nextGuesses = [
       ...guesses,
       normalized,
     ];
 
-    /*
-     * 完全一致なら正解。
-     */
     const didWin =
       normalized ===
       answer;
 
-    /*
-     * 正解した、
-     * または6回使い切ったら終了。
-     */
     const didFinish =
       didWin ||
       nextGuesses.length >=
@@ -691,74 +1146,192 @@ export default function App() {
       didFinish,
     );
 
-    /*
-     * 端末内保存
-     */
     save(
       nextGuesses,
       didFinish,
       didWin,
     );
 
-    /*
-     * ゲーム終了時だけ
-     * Discordへ結果を保存。
-     */
-    if (didFinish) {
+    if (
+      didFinish
+    ) {
       void submitResult(
         nextGuesses,
         didWin,
+      );
+    } else {
+      /*
+       * 次の回答をすぐ打てるよう
+       * 入力欄へ戻します。
+       */
+      setTimeout(
+        () =>
+          focusInput(),
+        50,
       );
     }
   };
 
   /* =========================================================
-   * 日本語入力欄
+   * 入力フォーカス
    * ======================================================= */
 
-  const handleInputChange = (
-    value: string,
-  ) => {
-    /*
-     * IME変換中は制限しません。
-     *
-     * ここで5文字制限すると、
-     * ローマ字入力途中で文字が消えることがあります。
-     */
-    if (isComposing) {
-      setInput(value);
-      return;
-    }
+  const focusInput =
+    () => {
+      if (finished) {
+        return;
+      }
 
-    /*
-     * 変換が終わっている場合のみ、
-     * 日本語の文字単位で先頭5文字までにします。
-     */
-    const characters =
-      Array.from(value);
+      inputRef
+        .current
+        ?.focus();
+    };
 
-    setInput(
-      characters
-        .slice(0, 5)
-        .join(''),
-    );
-  };
+  /*
+   * 画面の余白・盤面などを押したら
+   * 入力欄へフォーカスします。
+   *
+   * ボタンや入力欄そのものを
+   * 押した場合は何もしません。
+   */
+  const handleScreenClick =
+    (
+      event:
+        React.MouseEvent<
+          HTMLElement
+        >,
+    ) => {
+      const target =
+        event.target;
+
+      if (
+        !(target instanceof
+          HTMLElement)
+      ) {
+        return;
+      }
+
+      if (
+        target.closest(
+          'button, input, [data-no-focus="true"]',
+        )
+      ) {
+        return;
+      }
+
+      focusInput();
+    };
 
   /* =========================================================
-   * 6行分の盤面
+   * IME
+   * ======================================================= */
+
+  const handleInputChange =
+    (
+      value:
+        string,
+    ) => {
+      if (
+        isComposing
+      ) {
+        setInput(
+          value,
+        );
+
+        return;
+      }
+
+      setInput(
+        Array.from(
+          value,
+        )
+          .slice(
+            0,
+            5,
+          )
+          .join(''),
+      );
+    };
+
+  /* =========================================================
+   * 五十音キー入力
+   * ======================================================= */
+
+  const pressKanaKey =
+    (
+      char:
+        string,
+    ) => {
+      if (
+        finished
+      ) {
+        return;
+      }
+
+      const current =
+        Array.from(
+          input,
+        );
+
+      if (
+        current.length >=
+        5
+      ) {
+        focusInput();
+
+        return;
+      }
+
+      setInput(
+        [
+          ...current,
+          char,
+        ].join(''),
+      );
+
+      setTimeout(
+        () =>
+          focusInput(),
+        20,
+      );
+    };
+
+  const backspace =
+    () => {
+      setInput(
+        Array.from(
+          input,
+        )
+          .slice(
+            0,
+            -1,
+          )
+          .join(''),
+      );
+
+      setTimeout(
+        () =>
+          focusInput(),
+        20,
+      );
+    };
+
+  /* =========================================================
+   * 盤面
    * ======================================================= */
 
   const boardRows =
     useMemo(
       () =>
         Array.from({
-          length: ROWS,
+          length:
+            ROWS,
         }),
       [],
     );
 
   /* =========================================================
-   * 問題読み込み中
+   * Loading
    * ======================================================= */
 
   if (!answer) {
@@ -772,20 +1345,27 @@ export default function App() {
   }
 
   /* =========================================================
-   * 画面
+   * UI
    * ======================================================= */
 
   return (
-    <main className="app">
-      {/* =========================
-          上部
-         ========================= */}
-
+    <main
+      className="app"
+      onClick={
+        handleScreenClick
+      }
+    >
       <header className="header">
         <button
           className="icon-button"
           aria-label="遊び方"
           type="button"
+          data-no-focus="true"
+          onClick={() =>
+            setShowHelp(
+              true,
+            )
+          }
         >
           ？
         </button>
@@ -798,27 +1378,36 @@ export default function App() {
           className="icon-button"
           aria-label="設定"
           type="button"
+          data-no-focus="true"
+          onClick={() =>
+            setShowSettings(
+              true,
+            )
+          }
         >
           ⚙
         </button>
       </header>
-
-      {/* =========================
-          ゲーム本体
-         ========================= */}
 
       <section className="game-area">
         <div className="puzzle-label">
           第{number}問
         </div>
 
-        {/* 盤面 */}
+        {/* =====================
+            盤面
+           =================== */}
 
         <div className="board">
           {boardRows.map(
-            (_, row) => (
+            (
+              _,
+              row,
+            ) => (
               <BoardRow
-                key={row}
+                key={
+                  row
+                }
                 guess={
                   guesses[
                     row
@@ -840,14 +1429,11 @@ export default function App() {
           )}
         </div>
 
-        {/* =========================
-            色の説明
-           ========================= */}
+        {/* =====================
+            凡例
+           =================== */}
 
-        <div
-          className="legend"
-          aria-label="色の意味"
-        >
+        <div className="legend">
           <span>
             <i className="legend-swatch correct" />
             文字・位置が一致
@@ -860,7 +1446,7 @@ export default function App() {
 
           <span>
             <i className="legend-swatch near" />
-            同じ行の文字がある
+            同じ位置・同じ行
           </span>
 
           <span>
@@ -869,9 +1455,9 @@ export default function App() {
           </span>
         </div>
 
-        {/* =========================
-            エラーメッセージ
-           ========================= */}
+        {/* =====================
+            メッセージ
+           =================== */}
 
         {message && (
           <div className="toast">
@@ -879,9 +1465,9 @@ export default function App() {
           </div>
         )}
 
-        {/* =========================
-            ゲーム終了
-           ========================= */}
+        {/* =====================
+            終了
+           =================== */}
 
         {finished && (
           <div className="result-card">
@@ -893,39 +1479,57 @@ export default function App() {
 
             <span>
               正解：
-              {answerEntry?.display}
+              {
+                answerEntry
+                  ?.display
+              }
 
-              {answerEntry?.reading
+              {answerEntry
+                ?.reading
                 ? `（${toHiragana(
                     answerEntry.reading,
                   )}）`
                 : ''}
             </span>
+
+            {discordStatus ===
+              'connected' && (
+              <span className="save-status">
+                {saveStatus ===
+                  'saving' &&
+                  '結果をDiscordへ保存しています…'}
+
+                {saveStatus ===
+                  'saved' &&
+                  '結果をDiscordへ保存しました'}
+
+                {saveStatus ===
+                  'error' &&
+                  'Discordへの結果保存に失敗しました'}
+              </span>
+            )}
           </div>
         )}
 
-        {/* =========================
-            入力欄
-           ========================= */}
+        {/* =====================
+            入力
+           =================== */}
 
         {!finished && (
           <div className="input-panel">
             <input
+              ref={
+                inputRef
+              }
               autoFocus
-              value={input}
-
-              /*
-               * 日本語IMEで変換開始
-               */
-              onCompositionStart={() => {
+              value={
+                input
+              }
+              onCompositionStart={() =>
                 setIsComposing(
                   true,
-                );
-              }}
-
-              /*
-               * 日本語IMEの変換確定
-               */
+                )
+              }
               onCompositionEnd={(
                 event,
               ) => {
@@ -933,14 +1537,11 @@ export default function App() {
                   false,
                 );
 
-                const value =
-                  event
-                    .currentTarget
-                    .value;
-
                 setInput(
                   Array.from(
-                    value,
+                    event
+                      .currentTarget
+                      .value,
                   )
                     .slice(
                       0,
@@ -949,25 +1550,15 @@ export default function App() {
                     .join(''),
                 );
               }}
-
-              /*
-               * 通常の文字入力
-               */
               onChange={(
                 event,
-              ) => {
+              ) =>
                 handleInputChange(
-                  event.target
+                  event
+                    .target
                     .value,
-                );
-              }}
-
-              /*
-               * Enterで決定。
-               *
-               * ただし日本語変換中のEnterは
-               * 「変換確定」なので送信しません。
-               */
+                )
+              }
               onKeyDown={(
                 event,
               ) => {
@@ -979,9 +1570,7 @@ export default function App() {
                   submit();
                 }
               }}
-
               placeholder="5文字のことば"
-
               aria-label="5文字のことばを入力"
             />
 
@@ -997,9 +1586,314 @@ export default function App() {
         )}
 
         <p className="hint">
-          ひらがな・カタカナのどちらでも入力できます
+          画面をクリックすると文字入力できます
         </p>
+
+        {/* =====================
+            五十音キーボード
+           =================== */}
+
+        <section
+          className="kana-keyboard"
+          aria-label="使用した文字"
+          data-no-focus="true"
+        >
+          <div className="keyboard-title-row">
+            <span>
+              使用した文字
+            </span>
+
+            <button
+              type="button"
+              className="keyboard-toggle"
+              data-no-focus="true"
+              onClick={() =>
+                setShowExtraKeys(
+                  (
+                    value,
+                  ) =>
+                    !value,
+                )
+              }
+            >
+              {showExtraKeys
+                ? '基本文字'
+                : '濁音・小文字'}
+            </button>
+          </div>
+
+          {!showExtraKeys && (
+            <div className="basic-keyboard">
+              {BASIC_KEYS.map(
+                (
+                  row,
+                  rowIndex,
+                ) => (
+                  <div
+                    className="kana-key-row"
+                    key={
+                      rowIndex
+                    }
+                  >
+                    {row.map(
+                      (
+                        char,
+                        index,
+                      ) =>
+                        char
+                          ? (
+                            <KanaKey
+                              key={
+                                char
+                              }
+                              char={
+                                char
+                              }
+                              usage={
+                                keyUsage.get(
+                                  toKatakana(
+                                    char,
+                                  ),
+                                )
+                              }
+                              onPress={
+                                pressKanaKey
+                              }
+                            />
+                          )
+                          : (
+                            <span
+                              key={
+                                `blank-${index}`
+                              }
+                              className="kana-key blank"
+                            />
+                          ),
+                    )}
+                  </div>
+                ),
+              )}
+            </div>
+          )}
+
+          {showExtraKeys && (
+            <div className="extra-keyboard">
+              {EXTRA_KEYS.map(
+                (
+                  char,
+                ) => (
+                  <KanaKey
+                    key={
+                      char
+                    }
+                    char={
+                      char
+                    }
+                    usage={
+                      keyUsage.get(
+                        toKatakana(
+                          char,
+                        ),
+                      )
+                    }
+                    onPress={
+                      pressKanaKey
+                    }
+                  />
+                ),
+              )}
+            </div>
+          )}
+
+          {!finished && (
+            <div className="keyboard-actions">
+              <button
+                type="button"
+                data-no-focus="true"
+                onClick={
+                  backspace
+                }
+              >
+                一字消す
+              </button>
+
+              <button
+                type="button"
+                className="keyboard-submit"
+                data-no-focus="true"
+                onClick={
+                  submit
+                }
+              >
+                決定
+              </button>
+            </div>
+          )}
+
+          <p className="near-key-help">
+            紫の①〜⑤は、その位置で同じ五十音行だったことを示します
+          </p>
+        </section>
       </section>
+
+      {/* =========================
+          遊び方
+         ========================= */}
+
+      {showHelp && (
+        <div
+          className="modal-backdrop"
+          data-no-focus="true"
+          onClick={() =>
+            setShowHelp(
+              false,
+            )
+          }
+        >
+          <div
+            className="modal"
+            onClick={(
+              event,
+            ) =>
+              event
+                .stopPropagation()
+            }
+          >
+            <h2>
+              遊び方
+            </h2>
+
+            <p>
+              5文字のことばを6回以内に当ててください。
+            </p>
+
+            <div className="help-row">
+              <span className="help-tile correct">
+                あ
+              </span>
+              文字も位置も正しい
+            </div>
+
+            <div className="help-row">
+              <span className="help-tile present">
+                あ
+              </span>
+              文字は正解に含まれるが位置が違う
+            </div>
+
+            <div className="help-row">
+              <span className="help-tile near">
+                あ
+              </span>
+              文字は違うが、その位置の正解文字と同じ五十音行
+            </div>
+
+            <div className="help-row">
+              <span className="help-tile absent">
+                あ
+              </span>
+              どれにも当てはまらない
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                setShowHelp(
+                  false,
+                )
+              }
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* =========================
+          設定
+         ========================= */}
+
+      {showSettings && (
+        <div
+          className="modal-backdrop"
+          data-no-focus="true"
+          onClick={() =>
+            setShowSettings(
+              false,
+            )
+          }
+        >
+          <div
+            className="modal"
+            onClick={(
+              event,
+            ) =>
+              event
+                .stopPropagation()
+            }
+          >
+            <h2>
+              ことばル設定
+            </h2>
+
+            <p>
+              Discord接続：
+              {' '}
+              {discordStatus ===
+                'connected' &&
+                '接続済み'}
+
+              {discordStatus ===
+                'connecting' &&
+                '接続中…'}
+
+              {discordStatus ===
+                'browser' &&
+                '通常ブラウザ'}
+
+              {discordStatus ===
+                'error' &&
+                '接続できませんでした'}
+            </p>
+
+            {discordUser && (
+              <p>
+                プレイヤー：
+                {' '}
+                {discordUser
+                  .global_name ||
+                  discordUser
+                    .username}
+              </p>
+            )}
+
+            <p className="settings-note">
+              昨日の結果を表示するチャンネルは、Discordで
+              <strong>
+                {' '}
+                /ことばル設定
+                {' '}
+              </strong>
+              を実行して設定できます。
+            </p>
+
+            <p className="settings-note">
+              Botが眠っている場合は、ことばルを開くことでRenderを起動します。接続後しばらくしてからコマンドを実行してください。
+            </p>
+
+            <button
+              type="button"
+              onClick={() =>
+                setShowSettings(
+                  false,
+                )
+              }
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
