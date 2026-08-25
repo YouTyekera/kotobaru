@@ -44,16 +44,95 @@ export function isDiscordActivityEnvironment():
       window.location.search,
     );
 
-  /*
-   * Discord Activityとして起動された場合、
-   * frame_id がURLに含まれます。
-   *
-   * CloudflareのURLを普通のブラウザで開いた場合は
-   * frame_id がありません。
-   */
   return params.has(
     "frame_id",
   );
+}
+
+/* =========================================================
+ * 待機
+ * ======================================================= */
+
+function sleep(
+  milliseconds: number,
+) {
+  return new Promise<void>(
+    (resolve) => {
+      window.setTimeout(
+        resolve,
+        milliseconds,
+      );
+    },
+  );
+}
+
+/* =========================================================
+ * Renderを先に起こす
+ *
+ * 無料Renderがスリープしている場合、
+ * OAuthコードを取得する前にHTTP通信を送って
+ * サーバーを起動しておきます。
+ * ======================================================= */
+
+async function wakeBackend():
+  Promise<boolean> {
+
+  /*
+   * 最大6回確認します。
+   *
+   * 1回目でRenderが寝ていても、
+   * 起動するまで少し待ちます。
+   */
+  for (
+    let attempt = 1;
+    attempt <= 6;
+    attempt += 1
+  ) {
+    try {
+      console.log(
+        `Render起動確認 ${attempt}/6`,
+      );
+
+      const response =
+        await fetch(
+          "/api/kotobaru/health",
+          {
+            method:
+              "GET",
+
+            cache:
+              "no-store",
+          },
+        );
+
+      if (response.ok) {
+        console.log(
+          "Renderへの接続を確認しました。",
+        );
+
+        return true;
+      }
+
+    } catch (error) {
+      console.log(
+        "Render起動待機中…",
+        error,
+      );
+    }
+
+    /*
+     * 次の確認まで5秒待つ
+     */
+    await sleep(
+      5000,
+    );
+  }
+
+  console.warn(
+    "Renderへの接続確認に時間がかかっています。",
+  );
+
+  return false;
 }
 
 /* =========================================================
@@ -64,11 +143,8 @@ export async function connectDiscord():
   Promise<DiscordConnection> {
 
   /*
-   * 通常ブラウザの場合。
-   *
-   * DiscordSDKを生成すると
-   * frame_id エラーになるため、
-   * ここで終了します。
+   * Cloudflareを普通のChrome等で
+   * 開いた場合。
    */
   if (
     !isDiscordActivityEnvironment()
@@ -84,9 +160,6 @@ export async function connectDiscord():
     };
   }
 
-  /*
-   * Application IDが設定されていない場合
-   */
   if (!clientId) {
     console.warn(
       "VITE_DISCORD_CLIENT_ID が設定されていません。",
@@ -101,7 +174,14 @@ export async function connectDiscord():
 
   try {
     /* =====================================================
-     * Discord SDK作成
+     * 重要：
+     * OAuth認証より前にRenderを起こす
+     * =================================================== */
+
+    await wakeBackend();
+
+    /* =====================================================
+     * Discord SDK
      * =================================================== */
 
     const discordSdk =
@@ -109,13 +189,10 @@ export async function connectDiscord():
         clientId,
       );
 
-    /*
-     * Discord側の準備完了を待つ
-     */
     await discordSdk.ready();
 
     /* =====================================================
-     * Discord OAuth認証
+     * OAuthコード取得
      * =================================================== */
 
     const authorizeResult =
@@ -137,9 +214,6 @@ export async function connectDiscord():
         ],
       });
 
-    /*
-     * Discordから認証コードを取得できなかった場合
-     */
     if (
       !authorizeResult.code
     ) {
@@ -149,16 +223,7 @@ export async function connectDiscord():
     }
 
     /* =====================================================
-     * Renderへ認証コードを渡す
-     *
-     * Discord URL Mapping：
-     *
-     * /api
-     * ↓
-     * relay-shogi-activity.onrender.com
-     *
-     * となっているため、
-     * 相対URLで問題ありません。
+     * RenderでOAuthコード交換
      * =================================================== */
 
     const tokenResponse =
@@ -181,10 +246,6 @@ export async function connectDiscord():
         },
       );
 
-    /* =====================================================
-     * OAuth失敗
-     * =================================================== */
-
     if (
       !tokenResponse.ok
     ) {
@@ -203,9 +264,6 @@ export async function connectDiscord():
     const tokenData =
       await tokenResponse.json();
 
-    /*
-     * RenderからAccess Tokenを取得できなかった場合
-     */
     if (
       !tokenData.access_token
     ) {
@@ -215,7 +273,7 @@ export async function connectDiscord():
     }
 
     /* =====================================================
-     * Discord側で認証完了
+     * Discord認証完了
      * =================================================== */
 
     const auth =
@@ -224,30 +282,22 @@ export async function connectDiscord():
           tokenData.access_token,
       });
 
-    /*
-     * ユーザー情報が取得できない場合
-     */
     if (!auth?.user) {
       throw new Error(
         "Discordユーザー情報を取得できませんでした。",
       );
     }
 
-    console.log(
-      "Discord接続成功:",
-      auth.user.username,
-    );
-
-    /* =====================================================
-     * 接続情報をApp.tsxへ返す
-     * =================================================== */
-
     const user =
       auth.user as DiscordUser;
 
+    console.log(
+      "Discord接続成功:",
+      user.username,
+    );
+
     return {
-      user:
-        user,
+      user,
 
       guildId:
         discordSdk.guildId ??
@@ -259,10 +309,6 @@ export async function connectDiscord():
     };
 
   } catch (error) {
-    /*
-     * Discord認証に失敗しても、
-     * ことばルそのものは遊べるようにします。
-     */
     console.error(
       "Discord接続エラー:",
       error,
