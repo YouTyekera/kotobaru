@@ -17,11 +17,6 @@ export type DiscordConnection = {
   user: DiscordUser | null;
   guildId: string | null;
   channelId: string | null;
-
-  /*
-   * 接続できなかった理由を
-   * App.tsx側にも渡します。
-   */
   error: string | null;
 };
 
@@ -50,23 +45,46 @@ export function isDiscordActivityEnvironment():
       window.location.search,
     );
 
-  /*
-   * Discord Activityから起動された場合、
-   * frame_id が付与されます。
-   */
   return params.has(
     "frame_id",
   );
 }
 
 /* =========================================================
- * Renderを先に起こす
- *
- * Discord Activityでは
- *
- * /.proxy/api/...
- *
- * を使ってURL Mappingを通します。
+ * エラーを人間が読める文字列にする
+ * ======================================================= */
+
+function errorToText(
+  error: unknown,
+): string {
+
+  if (
+    error instanceof Error
+  ) {
+    return (
+      `${error.name}: ${error.message}`
+    );
+  }
+
+  if (
+    typeof error === "string"
+  ) {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(
+      error,
+      null,
+      2,
+    );
+  } catch {
+    return String(error);
+  }
+}
+
+/* =========================================================
+ * Renderを起こす
  * ======================================================= */
 
 async function wakeBackend():
@@ -74,42 +92,36 @@ async function wakeBackend():
 
   try {
     console.log(
-      "Renderの起動確認を開始します。",
+      "Renderへの接続確認を開始します。",
     );
 
+    /*
+     * 現在のDiscord Activityでは
+     * /api のURL Mappingを
+     * そのまま利用できます。
+     */
     const response =
       await fetch(
-        "/.proxy/api/kotobaru/health",
+        "/api/kotobaru/health",
         {
           method: "GET",
           cache: "no-store",
         },
       );
 
-    if (!response.ok) {
-      console.warn(
-        "Render health確認失敗:",
-        response.status,
-      );
-
-      return;
-    }
-
-    const data =
-      await response.json();
-
     console.log(
-      "Render接続確認:",
-      data,
+      "Render health:",
+      response.status,
     );
+
   } catch (error) {
     /*
-     * health確認に失敗しても、
-     * OAuth自体は試します。
+     * ここで失敗しても
+     * Discord認証自体は続けます。
      */
     console.warn(
-      "Render起動確認エラー:",
-      error,
+      "Render health確認失敗:",
+      errorToText(error),
     );
   }
 }
@@ -141,7 +153,7 @@ export async function connectDiscord():
   }
 
   /* ---------------------------------------------------------
-   * Client IDなし
+   * Client ID確認
    * ------------------------------------------------------- */
 
   if (!clientId) {
@@ -168,7 +180,7 @@ export async function connectDiscord():
     await wakeBackend();
 
     /* =====================================================
-     * 2. Discord SDK
+     * 2. Discord SDK作成
      * =================================================== */
 
     const discordSdk =
@@ -183,7 +195,10 @@ export async function connectDiscord():
     );
 
     /* =====================================================
-     * 3. OAuth認証コード取得
+     * 3. OAuth
+     *
+     * Discord公式チュートリアルに合わせて
+     * 3つのscopeを要求します。
      * =================================================== */
 
     const authorizeResult =
@@ -202,35 +217,30 @@ export async function connectDiscord():
 
         scope: [
           "identify",
+          "guilds",
+          "applications.commands",
         ],
       });
+
+    console.log(
+      "authorize 成功",
+    );
 
     if (
       !authorizeResult.code
     ) {
       throw new Error(
-        "Discord認証コードを取得できませんでした。",
+        "Discord認証コードが返されませんでした。",
       );
     }
 
-    console.log(
-      "Discord認証コード取得成功",
-    );
-
     /* =====================================================
-     * 4. RenderでAccess Tokenに交換
-     *
-     * IMPORTANT:
-     *
-     * /api/... ではなく
-     * /.proxy/api/...
-     *
-     * を使用します。
+     * 4. RenderでToken交換
      * =================================================== */
 
     const tokenResponse =
       await fetch(
-        "/.proxy/api/kotobaru/token",
+        "/api/kotobaru/token",
         {
           method:
             "POST",
@@ -248,34 +258,43 @@ export async function connectDiscord():
         },
       );
 
+    const tokenText =
+      await tokenResponse.text();
+
     if (
       !tokenResponse.ok
     ) {
-      const text =
-        await tokenResponse
-          .text()
-          .catch(
-            () => "",
-          );
-
       throw new Error(
-        `OAuth Token交換失敗: HTTP ${tokenResponse.status} ${text}`,
+        `Token交換失敗 HTTP ${tokenResponse.status}: ${tokenText}`,
       );
     }
 
-    const tokenData =
-      await tokenResponse.json();
+    let tokenData:
+      {
+        access_token?: string;
+      };
+
+    try {
+      tokenData =
+        JSON.parse(
+          tokenText,
+        );
+    } catch {
+      throw new Error(
+        `Token APIからJSON以外が返りました: ${tokenText.slice(0, 300)}`,
+      );
+    }
 
     if (
       !tokenData.access_token
     ) {
       throw new Error(
-        "Renderからアクセストークンが返されませんでした。",
+        "Token APIからaccess_tokenが返されませんでした。",
       );
     }
 
     console.log(
-      "Discord Access Token取得成功",
+      "Access Token取得成功",
     );
 
     /* =====================================================
@@ -290,7 +309,7 @@ export async function connectDiscord():
 
     if (!auth?.user) {
       throw new Error(
-        "Discordユーザー情報を取得できませんでした。",
+        "authenticate後にDiscordユーザーを取得できませんでした。",
       );
     }
 
@@ -301,6 +320,16 @@ export async function connectDiscord():
       "Discord接続成功:",
       user.username,
       user.id,
+    );
+
+    console.log(
+      "guildId:",
+      discordSdk.guildId,
+    );
+
+    console.log(
+      "channelId:",
+      discordSdk.channelId,
     );
 
     return {
@@ -319,12 +348,13 @@ export async function connectDiscord():
 
   } catch (error) {
     const message =
-      error instanceof Error
-        ? error.message
-        : String(error);
+      errorToText(
+        error,
+      );
 
     console.error(
       "Discord接続エラー:",
+      message,
       error,
     );
 

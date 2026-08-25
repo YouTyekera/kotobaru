@@ -762,7 +762,7 @@ export default function App() {
             try {
               const response =
                 await fetch(
-                  '/.proxy/api/kotobaru/awake',
+                  '/api/kotobaru/awake',
                   {
                     method:
                       'POST',
@@ -1188,7 +1188,7 @@ export default function App() {
         try {
           const response =
             await fetch(
-              '/.proxy/api/kotobaru/result',
+              '/api/kotobaru/result',
               {
                 method:
                   'POST',
