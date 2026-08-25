@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
 
 import {
@@ -41,12 +42,6 @@ type SavedGame = {
 type KeyUsage = {
   used: boolean;
 
-  /*
-   * キー全体に付ける状態。
-   *
-   * nearは位置依存なので
-   * ここには入れません。
-   */
   state:
     | 'correct'
     | 'present'
@@ -57,10 +52,12 @@ type KeyUsage = {
    * 薄紫になった位置。
    *
    * 例：
-   * [1, 3]
+   * [1, 4]
+   *
+   * → その文字を1文字目・4文字目で
+   *   入れた際に同じ行だった
    */
-  nearPositions:
-    number[];
+  nearPositions: number[];
 };
 
 type DiscordStatus =
@@ -350,7 +347,7 @@ function BoardRow({
 }
 
 /* =========================================================
- * 使用済み文字キーボード
+ * キーボード1文字
  * ======================================================= */
 
 function KanaKey({
@@ -438,6 +435,9 @@ export default function App() {
     useRef<HTMLInputElement>(
       null,
     );
+
+  const insideDiscord =
+    isDiscordActivityEnvironment();
 
   /* -------------------------
    * 辞書
@@ -533,9 +533,25 @@ export default function App() {
     setDiscordStatus,
   ] =
     useState<DiscordStatus>(
-      isDiscordActivityEnvironment()
+      insideDiscord
         ? 'connecting'
         : 'browser',
+    );
+
+  const [
+    discordError,
+    setDiscordError,
+  ] =
+    useState<string | null>(
+      null,
+    );
+
+  const [
+    discordIdentityReady,
+    setDiscordIdentityReady,
+  ] =
+    useState(
+      !insideDiscord,
     );
 
   const [
@@ -569,12 +585,49 @@ export default function App() {
       ?.reading ?? '';
 
   /* =========================================================
-   * 辞書を読み込む
+   * ユーザー別localStorageキー
    *
-   * Discord接続とは分離します。
+   * Discord:
    *
-   * Renderが起きるのを待っている間も
-   * ゲーム画面は先に表示できます。
+   * kotobaru-today:user:123456...
+   *
+   * 通常ブラウザ:
+   *
+   * kotobaru-today:browser
+   *
+   * Discord認証失敗時はnull。
+   * 他人の盤面を誤って復元しないためです。
+   * ======================================================= */
+
+  const storageKey =
+    useMemo(
+      () => {
+        if (
+          !insideDiscord
+        ) {
+          return (
+            'kotobaru-today:browser'
+          );
+        }
+
+        if (
+          discordUser?.id
+        ) {
+          return (
+            `kotobaru-today:user:${discordUser.id}`
+          );
+        }
+
+        return null;
+      },
+      [
+        insideDiscord,
+        discordUser?.id,
+      ],
+    );
+
+  /* =========================================================
+   * 辞書読み込み
    * ======================================================= */
 
   useEffect(() => {
@@ -644,10 +697,14 @@ export default function App() {
 
   useEffect(() => {
     if (
-      !isDiscordActivityEnvironment()
+      !insideDiscord
     ) {
       setDiscordStatus(
         'browser',
+      );
+
+      setDiscordIdentityReady(
+        true,
       );
 
       return;
@@ -655,6 +712,10 @@ export default function App() {
 
     setDiscordStatus(
       'connecting',
+    );
+
+    setDiscordError(
+      null,
     );
 
     connectDiscord()
@@ -670,6 +731,19 @@ export default function App() {
             discord.guildId,
           );
 
+          setDiscordError(
+            discord.error,
+          );
+
+          /*
+           * ここで初めて、
+           * どのユーザーのlocalStorageを読むか
+           * 確定したことにします。
+           */
+          setDiscordIdentityReady(
+            true,
+          );
+
           if (
             discord.user &&
             discord.guildId
@@ -679,37 +753,46 @@ export default function App() {
             );
 
             /*
-             * HTTP通信を1回送ることで
-             * Renderが眠っていれば起こします。
+             * Renderを起こす・
+             * 昨日の結果確認。
              *
-             * 同時に「昨日の結果」が
-             * 未投稿なら投稿します。
+             * Activity内なので
+             * /.proxy を使用。
              */
-            fetch(
-              '/api/kotobaru/awake',
-              {
-                method:
-                  'POST',
+            try {
+              const response =
+                await fetch(
+                  '/.proxy/api/kotobaru/awake',
+                  {
+                    method:
+                      'POST',
 
-                headers: {
-                  'Content-Type':
-                    'application/json',
-                },
+                    headers: {
+                      'Content-Type':
+                        'application/json',
+                    },
 
-                body:
-                  JSON.stringify({
-                    guildId:
-                      discord.guildId,
-                  }),
-              },
-            ).catch(
-              (error) => {
-                console.warn(
-                  'Render起動確認に失敗:',
-                  error,
+                    body:
+                      JSON.stringify({
+                        guildId:
+                          discord.guildId,
+                      }),
+                  },
                 );
-              },
-            );
+
+              console.log(
+                'ことばル awake:',
+                response.status,
+              );
+            } catch (
+              error
+            ) {
+              console.warn(
+                'awake通信失敗:',
+                error,
+              );
+            }
+
           } else {
             setDiscordStatus(
               'error',
@@ -720,32 +803,70 @@ export default function App() {
       .catch(
         (error) => {
           console.error(
-            'Discord接続エラー:',
+            'Discord接続処理エラー:',
             error,
+          );
+
+          setDiscordError(
+            error instanceof Error
+              ? error.message
+              : String(error),
           );
 
           setDiscordStatus(
             'error',
           );
+
+          setDiscordIdentityReady(
+            true,
+          );
         },
       );
-  }, []);
+  }, [
+    insideDiscord,
+  ]);
 
   /* =========================================================
-   * 保存済みゲーム復元
+   * ユーザーが確定したら
+   * その人専用の盤面を復元
    * ======================================================= */
 
   useEffect(() => {
-    if (!answer) {
+    if (
+      !answer ||
+      !discordIdentityReady
+    ) {
+      return;
+    }
+
+    /*
+     * Discord Activityなのに
+     * ユーザーIDが取得できていない場合は
+     * 誰のデータか分からないため
+     * 永続データを読みません。
+     */
+    if (!storageKey) {
+      setGuesses([]);
+      setFinished(false);
+      setWon(false);
+
       return;
     }
 
     const raw =
       localStorage.getItem(
-        'kotobaru-today',
+        storageKey,
       );
 
+    /*
+     * 新しいユーザーなら
+     * 空の盤面から開始。
+     */
     if (!raw) {
+      setGuesses([]);
+      setFinished(false);
+      setWon(false);
+
       return;
     }
 
@@ -770,19 +891,33 @@ export default function App() {
         setWon(
           saved.won,
         );
+      } else {
+        /*
+         * 昨日のデータだったら
+         * 今日の盤面を初期化。
+         */
+        setGuesses([]);
+        setFinished(false);
+        setWon(false);
       }
     } catch {
       console.warn(
         '保存済みゲームデータを読み込めませんでした。',
       );
+
+      setGuesses([]);
+      setFinished(false);
+      setWon(false);
     }
   }, [
     answer,
     dateKey,
+    storageKey,
+    discordIdentityReady,
   ]);
 
   /* =========================================================
-   * localStorage
+   * localStorage保存
    * ======================================================= */
 
   const save = (
@@ -793,6 +928,15 @@ export default function App() {
     nextWon:
       boolean,
   ) => {
+    /*
+     * Discord認証失敗時は
+     * アカウントを区別できないため
+     * localStorageへ保存しません。
+     */
+    if (!storageKey) {
+      return;
+    }
+
     const data:
       SavedGame = {
       date:
@@ -809,7 +953,7 @@ export default function App() {
     };
 
     localStorage.setItem(
-      'kotobaru-today',
+      storageKey,
       JSON.stringify(
         data,
       ),
@@ -817,7 +961,7 @@ export default function App() {
   };
 
   /* =========================================================
-   * 使用済み文字情報
+   * 使用済み文字
    * ======================================================= */
 
   const keyUsage =
@@ -828,18 +972,36 @@ export default function App() {
           KeyUsage
         >();
 
-      const priority:
-        Record<
-          Exclude<
-            TileState,
-            'near'
-          >,
-          number
-        > = {
-        absent: 1,
-        present: 2,
-        correct: 3,
-      };
+      function priority(
+        state:
+          | 'correct'
+          | 'present'
+          | 'absent'
+          | null,
+      ) {
+        if (
+          state ===
+          'correct'
+        ) {
+          return 3;
+        }
+
+        if (
+          state ===
+          'present'
+        ) {
+          return 2;
+        }
+
+        if (
+          state ===
+          'absent'
+        ) {
+          return 1;
+        }
+
+        return 0;
+      }
 
       for (
         const guess of
@@ -874,6 +1036,9 @@ export default function App() {
             current.used =
               true;
 
+            /*
+             * 紫は位置依存。
+             */
             if (
               tile.state ===
               'near'
@@ -894,22 +1059,30 @@ export default function App() {
                     position,
                   );
               }
-            } else {
-              const nextState =
-                tile.state;
+            }
 
+            /*
+             * 緑・黄・灰は
+             * キー本体の色に使用。
+             */
+            if (
+              tile.state ===
+                'correct' ||
+              tile.state ===
+                'present' ||
+              tile.state ===
+                'absent'
+            ) {
               if (
-                !current.state ||
-                priority[
-                  nextState
-                ] >
-                  priority[
-                    current
-                      .state
-                  ]
+                priority(
+                  tile.state,
+                ) >
+                priority(
+                  current.state,
+                )
               ) {
                 current.state =
-                  nextState;
+                  tile.state;
               }
             }
 
@@ -929,9 +1102,6 @@ export default function App() {
 
   /* =========================================================
    * Discord結果保存
-   *
-   * Render起動直後などを考えて
-   * 数回再試行します。
    * ======================================================= */
 
   const submitResult =
@@ -945,6 +1115,14 @@ export default function App() {
         !discordUser ||
         !guildId
       ) {
+        console.warn(
+          'Discordユーザーを取得できていないため結果送信を省略します。',
+        );
+
+        setSaveStatus(
+          'error',
+        );
+
         return;
       }
 
@@ -999,7 +1177,8 @@ export default function App() {
       );
 
       /*
-       * 最大5回。
+       * Renderの起動待ちも考慮し、
+       * 最大5回再試行。
        */
       for (
         let attempt = 1;
@@ -1009,7 +1188,7 @@ export default function App() {
         try {
           const response =
             await fetch(
-              '/api/kotobaru/result',
+              '/.proxy/api/kotobaru/result',
               {
                 method:
                   'POST',
@@ -1029,6 +1208,10 @@ export default function App() {
           if (
             response.ok
           ) {
+            console.log(
+              'ことばル結果保存成功',
+            );
+
             setSaveStatus(
               'saved',
             );
@@ -1038,12 +1221,14 @@ export default function App() {
 
           console.warn(
             `結果保存失敗 ${attempt}/5`,
+            response.status,
             await response
               .text()
               .catch(
                 () => '',
               ),
           );
+
         } catch (
           error
         ) {
@@ -1056,12 +1241,13 @@ export default function App() {
         if (
           attempt < 5
         ) {
-          await new Promise(
-            (resolve) =>
-              setTimeout(
+          await new Promise<void>(
+            (resolve) => {
+              window.setTimeout(
                 resolve,
                 4000,
-              ),
+              );
+            },
           );
         }
       }
@@ -1069,6 +1255,21 @@ export default function App() {
       setSaveStatus(
         'error',
       );
+    };
+
+  /* =========================================================
+   * 入力欄へフォーカス
+   * ======================================================= */
+
+  const focusInput =
+    () => {
+      if (finished) {
+        return;
+      }
+
+      inputRef
+        .current
+        ?.focus();
     };
 
   /* =========================================================
@@ -1160,67 +1361,12 @@ export default function App() {
         didWin,
       );
     } else {
-      /*
-       * 次の回答をすぐ打てるよう
-       * 入力欄へ戻します。
-       */
-      setTimeout(
-        () =>
-          focusInput(),
+      window.setTimeout(
+        focusInput,
         50,
       );
     }
   };
-
-  /* =========================================================
-   * 入力フォーカス
-   * ======================================================= */
-
-  const focusInput =
-    () => {
-      if (finished) {
-        return;
-      }
-
-      inputRef
-        .current
-        ?.focus();
-    };
-
-  /*
-   * 画面の余白・盤面などを押したら
-   * 入力欄へフォーカスします。
-   *
-   * ボタンや入力欄そのものを
-   * 押した場合は何もしません。
-   */
-  const handleScreenClick =
-    (
-      event:
-        React.MouseEvent<
-          HTMLElement
-        >,
-    ) => {
-      const target =
-        event.target;
-
-      if (
-        !(target instanceof
-          HTMLElement)
-      ) {
-        return;
-      }
-
-      if (
-        target.closest(
-          'button, input, [data-no-focus="true"]',
-        )
-      ) {
-        return;
-      }
-
-      focusInput();
-    };
 
   /* =========================================================
    * IME
@@ -1289,9 +1435,8 @@ export default function App() {
         ].join(''),
       );
 
-      setTimeout(
-        () =>
-          focusInput(),
+      window.setTimeout(
+        focusInput,
         20,
       );
     };
@@ -1309,11 +1454,45 @@ export default function App() {
           .join(''),
       );
 
-      setTimeout(
-        () =>
-          focusInput(),
+      window.setTimeout(
+        focusInput,
         20,
       );
+    };
+
+  /* =========================================================
+   * 画面クリック
+   * ======================================================= */
+
+  const handleScreenClick =
+    (
+      event:
+        ReactMouseEvent<
+          HTMLElement
+        >,
+    ) => {
+      const target =
+        event.target;
+
+      if (
+        !(target instanceof
+          HTMLElement)
+      ) {
+        return;
+      }
+
+      /*
+       * ボタン・入力欄・モーダル等は除外。
+       */
+      if (
+        target.closest(
+          'button, input, [data-no-focus="true"]',
+        )
+      ) {
+        return;
+      }
+
+      focusInput();
     };
 
   /* =========================================================
@@ -1394,9 +1573,7 @@ export default function App() {
           第{number}問
         </div>
 
-        {/* =====================
-            盤面
-           =================== */}
+        {/* 盤面 */}
 
         <div className="board">
           {boardRows.map(
@@ -1429,9 +1606,7 @@ export default function App() {
           )}
         </div>
 
-        {/* =====================
-            凡例
-           =================== */}
+        {/* 凡例 */}
 
         <div className="legend">
           <span>
@@ -1455,19 +1630,13 @@ export default function App() {
           </span>
         </div>
 
-        {/* =====================
-            メッセージ
-           =================== */}
-
         {message && (
           <div className="toast">
             {message}
           </div>
         )}
 
-        {/* =====================
-            終了
-           =================== */}
+        {/* 結果 */}
 
         {finished && (
           <div className="result-card">
@@ -1492,8 +1661,7 @@ export default function App() {
                 : ''}
             </span>
 
-            {discordStatus ===
-              'connected' && (
+            {insideDiscord && (
               <span className="save-status">
                 {saveStatus ===
                   'saving' &&
@@ -1511,9 +1679,7 @@ export default function App() {
           </div>
         )}
 
-        {/* =====================
-            入力
-           =================== */}
+        {/* 入力 */}
 
         {!finished && (
           <div className="input-panel">
@@ -1585,13 +1751,15 @@ export default function App() {
           </div>
         )}
 
-        <p className="hint">
-          画面をクリックすると文字入力できます
-        </p>
+        {!finished && (
+          <p className="hint">
+            画面をクリックすると文字入力できます
+          </p>
+        )}
 
-        {/* =====================
+        {/* =================================================
             五十音キーボード
-           =================== */}
+           =============================================== */}
 
         <section
           className="kana-keyboard"
@@ -1664,7 +1832,7 @@ export default function App() {
                           : (
                             <span
                               key={
-                                `blank-${index}`
+                                `blank-${rowIndex}-${index}`
                               }
                               className="kana-key blank"
                             />
@@ -1736,9 +1904,9 @@ export default function App() {
         </section>
       </section>
 
-      {/* =========================
+      {/* =================================================
           遊び方
-         ========================= */}
+         =============================================== */}
 
       {showHelp && (
         <div
@@ -1771,6 +1939,7 @@ export default function App() {
               <span className="help-tile correct">
                 あ
               </span>
+
               文字も位置も正しい
             </div>
 
@@ -1778,6 +1947,7 @@ export default function App() {
               <span className="help-tile present">
                 あ
               </span>
+
               文字は正解に含まれるが位置が違う
             </div>
 
@@ -1785,13 +1955,15 @@ export default function App() {
               <span className="help-tile near">
                 あ
               </span>
-              文字は違うが、その位置の正解文字と同じ五十音行
+
+              その位置の正解文字と同じ五十音行
             </div>
 
             <div className="help-row">
               <span className="help-tile absent">
                 あ
               </span>
+
               どれにも当てはまらない
             </div>
 
@@ -1809,9 +1981,9 @@ export default function App() {
         </div>
       )}
 
-      {/* =========================
+      {/* =================================================
           設定
-         ========================= */}
+         =============================================== */}
 
       {showSettings && (
         <div
@@ -1839,6 +2011,7 @@ export default function App() {
             <p>
               Discord接続：
               {' '}
+
               {discordStatus ===
                 'connected' &&
                 '接続済み'}
@@ -1867,18 +2040,24 @@ export default function App() {
               </p>
             )}
 
+            {discordError && (
+              <div className="discord-error-box">
+                <strong>
+                  接続エラー
+                </strong>
+
+                <p>
+                  {discordError}
+                </p>
+              </div>
+            )}
+
             <p className="settings-note">
-              昨日の結果を表示するチャンネルは、Discordで
-              <strong>
-                {' '}
-                /ことばル設定
-                {' '}
-              </strong>
-              を実行して設定できます。
+              Discord接続に成功すると、回答履歴はDiscordアカウントごとに別々に保存されます。
             </p>
 
             <p className="settings-note">
-              Botが眠っている場合は、ことばルを開くことでRenderを起動します。接続後しばらくしてからコマンドを実行してください。
+              通常ブラウザから開いた場合は、このブラウザ専用の回答履歴を使用します。
             </p>
 
             <button

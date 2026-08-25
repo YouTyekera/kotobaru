@@ -1035,3 +1035,46 @@ button {
       12px;
   }
 }
+/* =========================================================
+ * Discord接続エラー表示
+ * ======================================================= */
+
+.discord-error-box {
+  margin-top: 14px;
+  padding: 10px 12px;
+
+  border:
+    1px solid #8c4444;
+
+  border-radius:
+    6px;
+
+  background:
+    #2a1d1d;
+
+  color:
+    #f0c4c4;
+}
+
+.discord-error-box strong {
+  display: block;
+
+  margin-bottom:
+    5px;
+}
+
+.discord-error-box p {
+  margin: 0;
+
+  color:
+    #dcaeae;
+
+  font-size:
+    11px;
+
+  line-height:
+    1.55;
+
+  overflow-wrap:
+    anywhere;
+}
