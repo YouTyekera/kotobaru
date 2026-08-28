@@ -8,7 +8,10 @@ import {
 
 import {
   connectDiscord,
+  getDiscordParticipants,
   isDiscordActivityEnvironment,
+  subscribeDiscordParticipants,
+  updateKotobaruPresence,
   type DiscordUser,
 } from './discord';
 
@@ -562,6 +565,12 @@ export default function App() {
       'idle',
     );
 
+
+  const [
+    participantCount,
+    setParticipantCount,
+  ] = useState(0);
+
   /* =========================================================
    * 今日
    * ======================================================= */
@@ -692,10 +701,15 @@ export default function App() {
   }, []);
 
   /* =========================================================
-   * Discord接続
+   * Discord接続・同じActivityの参加者監視
    * ======================================================= */
 
   useEffect(() => {
+    let unsubscribeParticipants:
+      (() => void) | null = null;
+
+    let cancelled = false;
+
     if (
       !insideDiscord
     ) {
@@ -723,6 +737,10 @@ export default function App() {
         async (
           discord,
         ) => {
+          if (cancelled) {
+            return;
+          }
+
           setDiscordUser(
             discord.user,
           );
@@ -735,11 +753,6 @@ export default function App() {
             discord.error,
           );
 
-          /*
-           * ここで初めて、
-           * どのユーザーのlocalStorageを読むか
-           * 確定したことにします。
-           */
           setDiscordIdentityReady(
             true,
           );
@@ -753,11 +766,33 @@ export default function App() {
             );
 
             /*
-             * Renderを起こす・
-             * 昨日の結果確認。
-             *
-             * Activity内なので
-             * /.proxy を使用。
+             * 同じActivityに現在参加している人数を取得。
+             * Discord側の挑戦状況表示にも利用します。
+             */
+            const participants =
+              await getDiscordParticipants();
+
+            if (!cancelled) {
+              setParticipantCount(
+                participants.length,
+              );
+            }
+
+            unsubscribeParticipants =
+              subscribeDiscordParticipants(
+                (
+                  nextParticipants,
+                ) => {
+                  if (!cancelled) {
+                    setParticipantCount(
+                      nextParticipants.length,
+                    );
+                  }
+                },
+              );
+
+            /*
+             * Renderを起こし、昨日の結果が未投稿なら確認します。
              */
             try {
               const response =
@@ -781,14 +816,14 @@ export default function App() {
                 );
 
               console.log(
-                'ことばル awake:',
+                'ことばル起動確認:',
                 response.status,
               );
             } catch (
               error
             ) {
               console.warn(
-                'awake通信失敗:',
+                '起動確認通信失敗:',
                 error,
               );
             }
@@ -802,6 +837,10 @@ export default function App() {
       )
       .catch(
         (error) => {
+          if (cancelled) {
+            return;
+          }
+
           console.error(
             'Discord接続処理エラー:',
             error,
@@ -822,8 +861,55 @@ export default function App() {
           );
         },
       );
+
+    return () => {
+      cancelled = true;
+
+      if (
+        unsubscribeParticipants
+      ) {
+        unsubscribeParticipants();
+      }
+    };
   }, [
     insideDiscord,
+  ]);
+
+  /* =========================================================
+   * Discordの挑戦状況表示
+   * ======================================================= */
+
+  useEffect(() => {
+    if (
+      discordStatus !==
+        'connected'
+    ) {
+      return;
+    }
+
+    void updateKotobaruPresence({
+      puzzleNumber:
+        number,
+
+      participantCount:
+        Math.max(
+          1,
+          participantCount,
+        ),
+
+      finished,
+      won,
+
+      attempts:
+        guesses.length,
+    });
+  }, [
+    discordStatus,
+    number,
+    participantCount,
+    finished,
+    won,
+    guesses.length,
   ]);
 
   /* =========================================================
@@ -1101,6 +1187,113 @@ export default function App() {
     ]);
 
   /* =========================================================
+   * Discordチャンネルへ途中経過を反映
+   *
+   * 正解の文字そのものは送らず、色の並びだけを送ります。
+   * 同じチャンネルの人は、誰が何手目まで進んだかを
+   * 本家Wordleに近い形で見ることができます。
+   * ======================================================= */
+
+  const submitProgress =
+    async (
+      nextGuesses:
+        string[],
+      didFinish:
+        boolean,
+      didWin:
+        boolean,
+    ) => {
+      if (
+        !discordUser ||
+        !guildId
+      ) {
+        return;
+      }
+
+      const pattern =
+        nextGuesses.map(
+          (guess) =>
+            evaluateGuess(
+              answer,
+              guess,
+            )
+              .map(
+                (tile) =>
+                  tileStateToEmoji(
+                    tile.state,
+                  ),
+              )
+              .join(''),
+        );
+
+      try {
+        const response =
+          await fetch(
+            '/api/kotobaru/progress',
+            {
+              method:
+                'POST',
+
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+
+              body:
+                JSON.stringify({
+                  guildId,
+
+                  userId:
+                    discordUser.id,
+
+                  displayName:
+                    discordUser
+                      .global_name ||
+                    discordUser
+                      .username,
+
+                  puzzleNumber:
+                    number,
+
+                  date:
+                    dateKey,
+
+                  attempts:
+                    didWin
+                      ? nextGuesses.length
+                      : null,
+
+                  won:
+                    didWin,
+
+                  finished:
+                    didFinish,
+
+                  pattern,
+                }),
+            },
+          );
+
+        if (!response.ok) {
+          console.warn(
+            '途中経過の共有に失敗しました:',
+            response.status,
+            await response
+              .text()
+              .catch(
+                () => '',
+              ),
+          );
+        }
+      } catch (error) {
+        console.warn(
+          '途中経過の共有通信に失敗しました:',
+          error,
+        );
+      }
+    };
+
+  /* =========================================================
    * Discord結果保存
    * ======================================================= */
 
@@ -1353,6 +1546,15 @@ export default function App() {
       didWin,
     );
 
+    /*
+     * 1手ごとに色の並びだけを公開チャンネルへ反映します。
+     */
+    void submitProgress(
+      nextGuesses,
+      didFinish,
+      didWin,
+    );
+
     if (
       didFinish
     ) {
@@ -1573,6 +1775,15 @@ export default function App() {
           第{number}問
         </div>
 
+        {insideDiscord &&
+          discordStatus ===
+            'connected' &&
+          participantCount > 0 && (
+            <div className="participant-status">
+              現在{participantCount}人が挑戦中
+            </div>
+          )}
+
         {/* 盤面 */}
 
         <div className="board">
@@ -1665,15 +1876,15 @@ export default function App() {
               <span className="save-status">
                 {saveStatus ===
                   'saving' &&
-                  '結果をDiscordへ保存しています…'}
+                  '結果をDiscordへ記録しています…'}
 
                 {saveStatus ===
                   'saved' &&
-                  '結果をDiscordへ保存しました'}
+                  '結果をDiscordへ記録しました'}
 
                 {saveStatus ===
                   'error' &&
-                  'Discordへの結果保存に失敗しました'}
+                  'Discordへの結果記録に失敗しました'}
               </span>
             )}
           </div>
@@ -2022,7 +2233,7 @@ export default function App() {
 
               {discordStatus ===
                 'browser' &&
-                '通常ブラウザ'}
+                '通常の閲覧画面'}
 
               {discordStatus ===
                 'error' &&
@@ -2031,7 +2242,7 @@ export default function App() {
 
             {discordUser && (
               <p>
-                プレイヤー：
+                挑戦者：
                 {' '}
                 {discordUser
                   .global_name ||
@@ -2057,7 +2268,7 @@ export default function App() {
             </p>
 
             <p className="settings-note">
-              通常ブラウザから開いた場合は、このブラウザ専用の回答履歴を使用します。
+              通常の閲覧画面から開いた場合は、この端末専用の回答履歴を使用します。
             </p>
 
             <button

@@ -1,5 +1,6 @@
 import {
   DiscordSDK,
+  Events,
 } from "@discord/embedded-app-sdk";
 
 /* =========================================================
@@ -13,11 +14,23 @@ export type DiscordUser = {
   avatar?: string | null;
 };
 
+export type DiscordParticipant = DiscordUser & {
+  bot?: boolean;
+};
+
 export type DiscordConnection = {
   user: DiscordUser | null;
   guildId: string | null;
   channelId: string | null;
   error: string | null;
+};
+
+export type KotobaruPresence = {
+  puzzleNumber: number;
+  participantCount: number;
+  finished: boolean;
+  won: boolean;
+  attempts: number;
 };
 
 /* =========================================================
@@ -26,6 +39,13 @@ export type DiscordConnection = {
 
 const clientId =
   import.meta.env.VITE_DISCORD_CLIENT_ID;
+
+const TOKEN_CACHE_KEY =
+  "kotobaru-discord-access-token";
+
+let discordSdk:
+  | DiscordSDK
+  | null = null;
 
 /* =========================================================
  * Discord Activity内か確認
@@ -51,7 +71,7 @@ export function isDiscordActivityEnvironment():
 }
 
 /* =========================================================
- * エラーを人間が読める文字列にする
+ * エラーを表示用文字列にする
  * ======================================================= */
 
 function errorToText(
@@ -91,15 +111,6 @@ async function wakeBackend():
   Promise<void> {
 
   try {
-    console.log(
-      "Renderへの接続確認を開始します。",
-    );
-
-    /*
-     * 現在のDiscord Activityでは
-     * /api のURL Mappingを
-     * そのまま利用できます。
-     */
     const response =
       await fetch(
         "/api/kotobaru/health",
@@ -113,11 +124,9 @@ async function wakeBackend():
       "Render health:",
       response.status,
     );
-
   } catch (error) {
     /*
-     * ここで失敗しても
-     * Discord認証自体は続けます。
+     * ここで失敗してもOAuth自体は試します。
      */
     console.warn(
       "Render health確認失敗:",
@@ -127,23 +136,64 @@ async function wakeBackend():
 }
 
 /* =========================================================
+ * キャッシュ済みAccess Tokenで認証
+ *
+ * Activityを開き直すたびにOAuth Token交換を行わず、
+ * 同一セッション内では既存Tokenを再利用します。
+ * Discord APIの429対策にもなります。
+ * ======================================================= */
+
+async function authenticateWithCachedToken() {
+  if (!discordSdk) {
+    return null;
+  }
+
+  const cached =
+    sessionStorage.getItem(
+      TOKEN_CACHE_KEY,
+    );
+
+  if (!cached) {
+    return null;
+  }
+
+  try {
+    const auth =
+      await discordSdk.commands.authenticate({
+        access_token: cached,
+      });
+
+    if (auth?.user) {
+      console.log(
+        "Discord認証情報を再利用しました。",
+      );
+
+      return auth;
+    }
+  } catch (error) {
+    console.warn(
+      "保存済みDiscord認証情報を再利用できませんでした。",
+      errorToText(error),
+    );
+  }
+
+  sessionStorage.removeItem(
+    TOKEN_CACHE_KEY,
+  );
+
+  return null;
+}
+
+/* =========================================================
  * Discord接続
  * ======================================================= */
 
 export async function connectDiscord():
   Promise<DiscordConnection> {
 
-  /* ---------------------------------------------------------
-   * 普通のブラウザ
-   * ------------------------------------------------------- */
-
   if (
     !isDiscordActivityEnvironment()
   ) {
-    console.log(
-      "通常ブラウザモードで起動しました。",
-    );
-
     return {
       user: null,
       guildId: null,
@@ -152,17 +202,9 @@ export async function connectDiscord():
     };
   }
 
-  /* ---------------------------------------------------------
-   * Client ID確認
-   * ------------------------------------------------------- */
-
   if (!clientId) {
     const message =
       "VITE_DISCORD_CLIENT_ID が設定されていません。";
-
-    console.error(
-      message,
-    );
 
     return {
       user: null,
@@ -173,164 +215,124 @@ export async function connectDiscord():
   }
 
   try {
-    /* =====================================================
-     * 1. Renderを起こす
-     * =================================================== */
-
     await wakeBackend();
 
-    /* =====================================================
-     * 2. Discord SDK作成
-     * =================================================== */
-
-    const discordSdk =
+    discordSdk =
       new DiscordSDK(
         clientId,
       );
 
     await discordSdk.ready();
 
-    console.log(
-      "Discord SDK ready",
-    );
+    let auth =
+      await authenticateWithCachedToken();
 
-    /* =====================================================
-     * 3. OAuth
-     *
-     * Discord公式チュートリアルに合わせて
-     * 3つのscopeを要求します。
-     * =================================================== */
+    if (!auth) {
+      const authorizeResult =
+        await discordSdk.commands.authorize({
+          client_id:
+            clientId,
 
-    const authorizeResult =
-      await discordSdk.commands.authorize({
-        client_id:
-          clientId,
+          response_type:
+            "code",
 
-        response_type:
-          "code",
+          state:
+            "",
 
-        state:
-          "",
+          prompt:
+            "none",
 
-        prompt:
-          "none",
+          scope: [
+            "identify",
+            "guilds",
+            "applications.commands",
+            "rpc.activities.write",
+          ],
+        });
 
-        scope: [
-          "identify",
-          "guilds",
-          "applications.commands",
-        ],
-      });
-
-    console.log(
-      "authorize 成功",
-    );
-
-    if (
-      !authorizeResult.code
-    ) {
-      throw new Error(
-        "Discord認証コードが返されませんでした。",
-      );
-    }
-
-    /* =====================================================
-     * 4. RenderでToken交換
-     * =================================================== */
-
-    const tokenResponse =
-      await fetch(
-        "/api/kotobaru/token",
-        {
-          method:
-            "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-
-          body:
-            JSON.stringify({
-              code:
-                authorizeResult.code,
-            }),
-        },
-      );
-
-    const tokenText =
-      await tokenResponse.text();
-
-    if (
-      !tokenResponse.ok
-    ) {
-      throw new Error(
-        `Token交換失敗 HTTP ${tokenResponse.status}: ${tokenText}`,
-      );
-    }
-
-    let tokenData:
-      {
-        access_token?: string;
-      };
-
-    try {
-      tokenData =
-        JSON.parse(
-          tokenText,
+      if (
+        !authorizeResult.code
+      ) {
+        throw new Error(
+          "Discord認証コードが返されませんでした。",
         );
-    } catch {
-      throw new Error(
-        `Token APIからJSON以外が返りました: ${tokenText.slice(0, 300)}`,
+      }
+
+      const tokenResponse =
+        await fetch(
+          "/api/kotobaru/token",
+          {
+            method:
+              "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body:
+              JSON.stringify({
+                code:
+                  authorizeResult.code,
+              }),
+          },
+        );
+
+      const tokenText =
+        await tokenResponse.text();
+
+      if (
+        !tokenResponse.ok
+      ) {
+        throw new Error(
+          `Token交換失敗 HTTP ${tokenResponse.status}: ${tokenText}`,
+        );
+      }
+
+      let tokenData:
+        {
+          access_token?: string;
+        };
+
+      try {
+        tokenData =
+          JSON.parse(
+            tokenText,
+          );
+      } catch {
+        throw new Error(
+          `Token APIからJSON以外が返りました: ${tokenText.slice(0, 300)}`,
+        );
+      }
+
+      if (
+        !tokenData.access_token
+      ) {
+        throw new Error(
+          "Token APIからaccess_tokenが返されませんでした。",
+        );
+      }
+
+      sessionStorage.setItem(
+        TOKEN_CACHE_KEY,
+        tokenData.access_token,
       );
+
+      auth =
+        await discordSdk.commands.authenticate({
+          access_token:
+            tokenData.access_token,
+        });
     }
-
-    if (
-      !tokenData.access_token
-    ) {
-      throw new Error(
-        "Token APIからaccess_tokenが返されませんでした。",
-      );
-    }
-
-    console.log(
-      "Access Token取得成功",
-    );
-
-    /* =====================================================
-     * 5. Discord認証完了
-     * =================================================== */
-
-    const auth =
-      await discordSdk.commands.authenticate({
-        access_token:
-          tokenData.access_token,
-      });
 
     if (!auth?.user) {
       throw new Error(
-        "authenticate後にDiscordユーザーを取得できませんでした。",
+        "Discordユーザー情報を取得できませんでした。",
       );
     }
 
     const user =
       auth.user as DiscordUser;
-
-    console.log(
-      "Discord接続成功:",
-      user.username,
-      user.id,
-    );
-
-    console.log(
-      "guildId:",
-      discordSdk.guildId,
-    );
-
-    console.log(
-      "channelId:",
-      discordSdk.channelId,
-    );
 
     return {
       user,
@@ -355,7 +357,6 @@ export async function connectDiscord():
     console.error(
       "Discord接続エラー:",
       message,
-      error,
     );
 
     return {
@@ -364,5 +365,125 @@ export async function connectDiscord():
       channelId: null,
       error: message,
     };
+  }
+}
+
+/* =========================================================
+ * 同じActivityに参加している人
+ * ======================================================= */
+
+export async function getDiscordParticipants():
+  Promise<DiscordParticipant[]> {
+
+  if (!discordSdk) {
+    return [];
+  }
+
+  try {
+    const response =
+      await discordSdk.commands
+        .getInstanceConnectedParticipants();
+
+    return (response.participants ?? []) as DiscordParticipant[];
+  } catch (error) {
+    console.warn(
+      "参加者一覧を取得できませんでした。",
+      errorToText(error),
+    );
+
+    return [];
+  }
+}
+
+/* =========================================================
+ * 参加者数の変化を監視
+ * ======================================================= */
+
+export function subscribeDiscordParticipants(
+  callback:
+    (
+      participants:
+        DiscordParticipant[],
+    ) => void,
+): () => void {
+
+  if (!discordSdk) {
+    return () => {};
+  }
+
+  const handler = (
+    payload: {
+      participants?:
+        DiscordParticipant[];
+    },
+  ) => {
+    callback(
+      payload.participants ??
+        [],
+    );
+  };
+
+  void discordSdk.subscribe(
+    Events.ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE,
+    handler,
+  );
+
+  return () => {
+    if (!discordSdk) {
+      return;
+    }
+
+    void discordSdk.unsubscribe(
+      Events.ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE,
+      handler,
+    );
+  };
+}
+
+/* =========================================================
+ * Discord上の「今何をしているか」を日本語化
+ * ======================================================= */
+
+export async function updateKotobaruPresence(
+  presence:
+    KotobaruPresence,
+): Promise<void> {
+
+  if (!discordSdk) {
+    return;
+  }
+
+  const participantText =
+    presence.participantCount > 1
+      ? `${presence.participantCount}人が参加中`
+      : "ことばを考え中";
+
+  let details =
+    `第${presence.puzzleNumber}問に挑戦中`;
+
+  if (presence.finished) {
+    details =
+      presence.won
+        ? `第${presence.puzzleNumber}問を${presence.attempts}回で正解`
+        : `第${presence.puzzleNumber}問に挑戦済み`;
+  }
+
+  try {
+    await discordSdk.commands.setActivity({
+      activity: {
+        type: 0,
+        details,
+        state:
+          participantText,
+      },
+    });
+  } catch (error) {
+    /*
+     * Rich Presenceが使えなくてもゲームには影響させません。
+     */
+    console.warn(
+      "Discordの挑戦状況表示を更新できませんでした。",
+      errorToText(error),
+    );
   }
 }
