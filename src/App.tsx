@@ -1583,7 +1583,7 @@ export default function App() {
    * 回答
    * ======================================================= */
 
-  const submit = () => {
+  const submit = async () => {
     if (
       !answer ||
       finished
@@ -1661,22 +1661,53 @@ export default function App() {
     );
 
     /*
-     * 1手ごとに色の並びだけを公開チャンネルへ反映します。
+     * 重要：終了時は /progress と /result を同時に送らない。
+     *
+     * 以前は最終手で2本のリクエストを同時送信していたため、
+     * Render再起動直後などに別々のsessionIdを掴み、
+     * 「結果は保存済みなのにPreviewだけ挑戦中」の状態が
+     * 残る可能性がありました。
+     *
+     * 終了時は /result だけを正本として送ります。
+     * /result 側で進捗LOG・終了済みキャッシュ・Previewを
+     * まとめて確定します。
      */
-    void submitProgress(
-      nextGuesses,
-      didFinish,
-      didWin,
-    );
-
     if (
       didFinish
     ) {
-      void submitResult(
+      const finalSyncKey =
+        [
+          discordUser?.id ?? 'unknown',
+          dateKey,
+          number,
+          nextGuesses.join('|'),
+          'finished',
+          didWin
+            ? 'won'
+            : 'not-won',
+        ].join(':');
+
+      /*
+       * setGuesses後の再同期useEffectが同時に/progressを
+       * 送らないよう、先に最終状態の同期キーを確定します。
+       */
+      previewSyncRef.current =
+        finalSyncKey;
+
+      await submitResult(
         nextGuesses,
         didWin,
       );
     } else {
+      /*
+       * プレイ途中だけ /progress を使います。
+       */
+      void submitProgress(
+        nextGuesses,
+        false,
+        false,
+      );
+
       window.setTimeout(
         focusInput,
         50,
