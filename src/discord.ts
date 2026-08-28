@@ -136,6 +136,51 @@ async function wakeBackend():
 }
 
 /* =========================================================
+ * Activityが開いたことをRenderへ伝える
+ *
+ * Discord標準の高速起動では一時的にゲーム招待カードが作られます。
+ * SDKのREADYまで到達した時点でguild/channelは分かるため、
+ * OAuth完了を待たずにRenderへ通知してカード整理を始めます。
+ * ======================================================= */
+
+async function notifyBackendAwake(
+  guildId: string | null,
+  channelId: string | null,
+): Promise<void> {
+  if (!guildId) {
+    return;
+  }
+
+  try {
+    const response =
+      await fetch(
+        "/api/kotobaru/awake",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            guildId,
+            channelId,
+          }),
+        },
+      );
+
+    console.log(
+      "Render awake:",
+      response.status,
+    );
+  } catch (error) {
+    console.warn(
+      "Render awake通知失敗:",
+      errorToText(error),
+    );
+  }
+}
+
+/* =========================================================
  * キャッシュ済みAccess Tokenで認証
  *
  * Activityを開き直すたびにOAuth Token交換を行わず、
@@ -223,6 +268,16 @@ export async function connectDiscord():
       );
 
     await discordSdk.ready();
+
+    /*
+     * Renderが起動したら、OAuthより先に起動カード整理を開始します。
+     * これによりDiscord APIの429等で認証が遅れても、
+     * チャンネルには不要な起動カードが残りにくくなります。
+     */
+    await notifyBackendAwake(
+      discordSdk.guildId ?? null,
+      discordSdk.channelId ?? null,
+    );
 
     let auth =
       await authenticateWithCachedToken();
