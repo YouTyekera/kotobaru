@@ -1302,6 +1302,13 @@ export default function App() {
                     didFinish,
 
                   pattern,
+
+                  /*
+                   * Render側で直ちに暗号化し、
+                   * Discord LOGには平文を保存しません。
+                   */
+                  guesses:
+                    nextGuesses,
                 }),
             },
           );
@@ -1463,6 +1470,13 @@ export default function App() {
           didWin,
 
         pattern,
+
+        /*
+         * 翌日の「使ったことば」表示用。
+         * サーバー側でAES暗号化してからLOGへ保存します。
+         */
+        guesses:
+          nextGuesses,
       };
 
       setSaveStatus(
