@@ -439,6 +439,14 @@ export default function App() {
       null,
     );
 
+  /*
+   * 公開Previewへ同じ盤面を何度も送らないための同期キー。
+   * デプロイ後にActivityを開き直した場合も、現在の盤面を
+   * 既存Previewへ上書きできるようにします。
+   */
+  const previewSyncRef =
+    useRef<string>('');
+
   const insideDiscord =
     isDiscordActivityEnvironment();
 
@@ -811,6 +819,9 @@ export default function App() {
                       JSON.stringify({
                         guildId:
                           discord.guildId,
+
+                        channelId:
+                          discord.channelId,
                       }),
                   },
                 );
@@ -1210,6 +1221,23 @@ export default function App() {
         return;
       }
 
+      const syncKey =
+        [
+          discordUser.id,
+          dateKey,
+          number,
+          nextGuesses.join('|'),
+          didFinish
+            ? 'finished'
+            : 'playing',
+          didWin
+            ? 'won'
+            : 'not-won',
+        ].join(':');
+
+      previewSyncRef.current =
+        syncKey;
+
       const pattern =
         nextGuesses.map(
           (guess) =>
@@ -1252,6 +1280,10 @@ export default function App() {
                     discordUser
                       .username,
 
+                  avatarHash:
+                    discordUser.avatar ??
+                    null,
+
                   puzzleNumber:
                     number,
 
@@ -1292,6 +1324,70 @@ export default function App() {
         );
       }
     };
+
+  /* =========================================================
+   * 既存Previewを現在の盤面で再同期
+   *
+   * コード更新後にActivityを開き直したとき、過去のPreviewを
+   * 新しい画像形式へ「上書き」するための処理です。
+   * ======================================================= */
+
+  useEffect(() => {
+    if (
+      !discordUser ||
+      !guildId ||
+      !answer ||
+      guesses.length === 0
+    ) {
+      return;
+    }
+
+    const didWin =
+      guesses[
+        guesses.length - 1
+      ] === answer;
+
+    const didFinish =
+      didWin ||
+      guesses.length >= ROWS;
+
+    const syncKey =
+      [
+        discordUser.id,
+        dateKey,
+        number,
+        guesses.join('|'),
+        didFinish
+          ? 'finished'
+          : 'playing',
+        didWin
+          ? 'won'
+          : 'not-won',
+      ].join(':');
+
+    if (
+      previewSyncRef.current ===
+      syncKey
+    ) {
+      return;
+    }
+
+    previewSyncRef.current =
+      syncKey;
+
+    void submitProgress(
+      guesses,
+      didFinish,
+      didWin,
+    );
+  }, [
+    discordUser?.id,
+    guildId,
+    answer,
+    dateKey,
+    number,
+    guesses,
+  ]);
 
   /* =========================================================
    * Discord結果保存
@@ -1346,6 +1442,10 @@ export default function App() {
             .global_name ||
           discordUser
             .username,
+
+        avatarHash:
+          discordUser.avatar ??
+          null,
 
         puzzleNumber:
           number,
