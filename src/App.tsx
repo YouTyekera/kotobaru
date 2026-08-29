@@ -23,7 +23,6 @@ import {
   tileStateToEmoji,
   toKatakana,
   type EvaluatedTile,
-  type TileState,
 } from './game';
 
 /* =========================================================
@@ -42,6 +41,17 @@ type SavedGame = {
   won: boolean;
 };
 
+type RemoteGameState = {
+  found: boolean;
+  restorable: boolean;
+  date?: string;
+  puzzleNumber?: number;
+  guesses?: string[];
+  finished?: boolean;
+  won?: boolean;
+  updatedAt?: string | null;
+};
+
 type KeyUsage = {
   used: boolean;
 
@@ -52,15 +62,13 @@ type KeyUsage = {
     | null;
 
   /*
-   * 薄紫になった位置。
+   * この文字と同じ五十音行の文字が、
+   * 正解のどこかにあることが分かったか。
    *
-   * 例：
-   * [1, 4]
-   *
-   * → その文字を1文字目・4文字目で
-   *   入れた際に同じ行だった
+   * 新ルールでは位置に依存しないため、
+   * ①〜⑤の位置情報は持ちません。
    */
-  nearPositions: number[];
+  near: boolean;
 };
 
 type DiscordStatus =
@@ -376,9 +384,7 @@ function KanaKey({
       ? 'key-used'
       : '',
 
-    usage
-      ?.nearPositions
-      .length
+    usage?.near
       ? 'key-has-near'
       : '',
   ]
@@ -401,28 +407,11 @@ function KanaKey({
         {char}
       </span>
 
-      {!!usage
-        ?.nearPositions
-        .length && (
+      {usage?.near && (
         <span className="near-position-list">
-          {usage
-            .nearPositions
-            .map(
-              (
-                position,
-              ) => (
-                <span
-                  key={
-                    position
-                  }
-                  className="near-position-badge"
-                >
-                  {
-                    position
-                  }
-                </span>
-              ),
-            )}
+          <span className="near-position-badge">
+            行
+          </span>
         </span>
       )}
     </button>
@@ -538,6 +527,26 @@ export default function App() {
     useState<
       string | null
     >(null);
+
+  const [
+    discordAccessToken,
+    setDiscordAccessToken,
+  ] =
+    useState<
+      string | null
+    >(null);
+
+  /*
+   * localStorageが消えていても、Discord LOGから復元確認が終わるまでは
+   * 空の盤面を「新規ゲーム」として見せません。
+   */
+  const [
+    restoreReady,
+    setRestoreReady,
+  ] =
+    useState(
+      !insideDiscord,
+    );
 
   const [
     discordStatus,
@@ -757,6 +766,10 @@ export default function App() {
             discord.guildId,
           );
 
+          setDiscordAccessToken(
+            discord.accessToken,
+          );
+
           setDiscordError(
             discord.error,
           );
@@ -924,8 +937,15 @@ export default function App() {
   ]);
 
   /* =========================================================
-   * ユーザーが確定したら
-   * その人専用の盤面を復元
+   * 盤面復元
+   *
+   * 1. localStorageに残っていれば即座に表示
+   * 2. Discord ActivityではサーバーLOGも確認
+   * 3. 両方にある場合は「回答数が多い方」を採用
+   * 4. 同数なら終了済みを優先
+   *
+   * Discord内のlocalStorageが消えたり別コンテキストになっても、
+   * KOTOBARU_PROGRESSの暗号化LOGから復元できます。
    * ======================================================= */
 
   useEffect(() => {
@@ -936,81 +956,366 @@ export default function App() {
       return;
     }
 
-    /*
-     * Discord Activityなのに
-     * ユーザーIDが取得できていない場合は
-     * 誰のデータか分からないため
-     * 永続データを読みません。
-     */
-    if (!storageKey) {
-      setGuesses([]);
-      setFinished(false);
-      setWon(false);
+    let cancelled =
+      false;
 
-      return;
-    }
-
-    const raw =
-      localStorage.getItem(
-        storageKey,
-      );
-
-    /*
-     * 新しいユーザーなら
-     * 空の盤面から開始。
-     */
-    if (!raw) {
-      setGuesses([]);
-      setFinished(false);
-      setWon(false);
-
-      return;
-    }
-
-    try {
-      const saved =
-        JSON.parse(
-          raw,
-        ) as SavedGame;
-
-      if (
-        saved.date ===
-        dateKey
-      ) {
-        setGuesses(
-          saved.guesses,
-        );
-
-        setFinished(
-          saved.finished,
-        );
-
-        setWon(
-          saved.won,
-        );
-      } else {
-        /*
-         * 昨日のデータだったら
-         * 今日の盤面を初期化。
-         */
-        setGuesses([]);
-        setFinished(false);
-        setWon(false);
+    const applySavedGame = (
+      saved:
+        SavedGame,
+    ) => {
+      if (cancelled) {
+        return;
       }
-    } catch {
-      console.warn(
-        '保存済みゲームデータを読み込めませんでした。',
+
+      setGuesses(
+        saved.guesses,
       );
 
+      setFinished(
+        saved.finished,
+      );
+
+      setWon(
+        saved.won,
+      );
+    };
+
+    const localGame = (():
+      SavedGame | null => {
+      if (!storageKey) {
+        return null;
+      }
+
+      const raw =
+        localStorage.getItem(
+          storageKey,
+        );
+
+      if (!raw) {
+        return null;
+      }
+
+      try {
+        const saved =
+          JSON.parse(
+            raw,
+          ) as SavedGame;
+
+        if (
+          saved.date !==
+            dateKey ||
+          !Array.isArray(
+            saved.guesses,
+          )
+        ) {
+          return null;
+        }
+
+        return saved;
+      } catch {
+        console.warn(
+          '端末内の保存データを読み込めませんでした。',
+        );
+
+        return null;
+      }
+    })();
+
+    /*
+     * 端末側に残っていれば、サーバー確認を待たず即復元します。
+     */
+    if (localGame) {
+      applySavedGame(
+        localGame,
+      );
+
+      setRestoreReady(
+        true,
+      );
+    } else if (
+      !insideDiscord
+    ) {
       setGuesses([]);
       setFinished(false);
       setWon(false);
+      setRestoreReady(
+        true,
+      );
+
+      return () => {
+        cancelled = true;
+      };
+    } else {
+      /*
+       * Discord内で端末保存が消えている場合、
+       * LOG確認が終わるまで空盤面を表示しません。
+       */
+      setRestoreReady(
+        false,
+      );
     }
+
+    const restoreFromServer =
+      async () => {
+        if (
+          !insideDiscord ||
+          !discordUser ||
+          !guildId ||
+          !discordAccessToken
+        ) {
+          if (
+            !localGame &&
+            !cancelled
+          ) {
+            setGuesses([]);
+            setFinished(false);
+            setWon(false);
+            setRestoreReady(
+              true,
+            );
+          }
+
+          return;
+        }
+
+        let remote:
+          RemoteGameState | null =
+            null;
+
+        let remoteRequestCompleted =
+          false;
+
+        /*
+         * Render起床直後も考慮し、短い再試行を行います。
+         * 盤面を失ったように見える時間をできるだけ短くしつつ、
+         * 一時的な通信失敗で新規ゲーム扱いにしないためです。
+         */
+        for (
+          let attempt = 1;
+          attempt <= 4;
+          attempt += 1
+        ) {
+          try {
+            const response =
+              await fetch(
+                '/api/kotobaru/state',
+                {
+                  method:
+                    'POST',
+
+                  headers: {
+                    'Content-Type':
+                      'application/json',
+
+                    Authorization:
+                      `Bearer ${discordAccessToken}`,
+                  },
+
+                  body:
+                    JSON.stringify({
+                      guildId,
+                      date:
+                        dateKey,
+                      puzzleNumber:
+                        number,
+                    }),
+                },
+              );
+
+            if (
+              response.ok
+            ) {
+              remoteRequestCompleted =
+                true;
+
+              remote =
+                await response.json() as
+                  RemoteGameState;
+
+              break;
+            }
+
+            console.warn(
+              `保存盤面の取得失敗 ${attempt}/4:`,
+              response.status,
+            );
+          } catch (
+            error
+          ) {
+            console.warn(
+              `保存盤面の取得通信失敗 ${attempt}/4:`,
+              error,
+            );
+          }
+
+          if (
+            attempt < 4
+          ) {
+            await new Promise<void>(
+              (resolve) => {
+                window.setTimeout(
+                  resolve,
+                  1200,
+                );
+              },
+            );
+          }
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        /*
+         * サーバー確認中にユーザーが回答を進めた可能性もあるため、
+         * 比較直前にlocalStorageをもう一度読みます。
+         */
+        let chosen =
+          localGame;
+
+        if (storageKey) {
+          const latestRaw =
+            localStorage.getItem(
+              storageKey,
+            );
+
+          if (latestRaw) {
+            try {
+              const latestLocal =
+                JSON.parse(
+                  latestRaw,
+                ) as SavedGame;
+
+              if (
+                latestLocal.date ===
+                  dateKey &&
+                Array.isArray(
+                  latestLocal.guesses,
+                )
+              ) {
+                chosen =
+                  latestLocal;
+              }
+            } catch {
+              // 初回に読めたデータをそのまま使います。
+            }
+          }
+        }
+
+        if (
+          remote?.found &&
+          remote.restorable &&
+          remote.date ===
+            dateKey &&
+          Array.isArray(
+            remote.guesses,
+          )
+        ) {
+          const remoteGame:
+            SavedGame = {
+            date:
+              dateKey,
+
+            guesses:
+              remote.guesses,
+
+            finished:
+              Boolean(
+                remote.finished,
+              ),
+
+            won:
+              Boolean(
+                remote.won,
+              ),
+          };
+
+          /*
+           * より進んでいる方を正本にします。
+           * 回答数が同じなら、終了済み状態を優先します。
+           */
+          const localLength =
+            chosen?.guesses
+              .length ?? -1;
+
+          const remoteLength =
+            remoteGame.guesses
+              .length;
+
+          if (
+            !chosen ||
+            remoteLength >
+              localLength ||
+            (
+              remoteLength ===
+                localLength &&
+              remoteGame.finished &&
+              !chosen.finished
+            )
+          ) {
+            chosen =
+              remoteGame;
+          }
+        }
+
+        if (chosen) {
+          applySavedGame(
+            chosen,
+          );
+
+          /*
+           * LOGから復元した場合はlocalStorageも再生します。
+           * 次回は即座に盤面を出せます。
+           */
+          if (storageKey) {
+            localStorage.setItem(
+              storageKey,
+              JSON.stringify(
+                chosen,
+              ),
+            );
+          }
+        } else {
+          setGuesses([]);
+          setFinished(false);
+          setWon(false);
+
+          if (
+            remote?.found &&
+            !remote.restorable
+          ) {
+            setMessage(
+              '前回の記録は見つかりましたが、旧形式のため盤面を復元できませんでした。',
+            );
+          } else if (
+            !remoteRequestCompleted
+          ) {
+            setMessage(
+              '前回の進行状況を確認できませんでした。通信状態によっては、開き直すと復元できる場合があります。',
+            );
+          }
+        }
+
+        setRestoreReady(
+          true,
+        );
+      };
+
+    void restoreFromServer();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     answer,
     dateKey,
+    number,
     storageKey,
     discordIdentityReady,
+    insideDiscord,
+    discordUser?.id,
+    guildId,
+    discordAccessToken,
   ]);
 
   /* =========================================================
@@ -1113,7 +1418,6 @@ export default function App() {
         evaluated.forEach(
           (
             tile,
-            index,
           ) => {
             const key =
               toKatakana(
@@ -1126,36 +1430,22 @@ export default function App() {
               ) ?? {
                 used: false,
                 state: null,
-                nearPositions:
-                  [],
+                near: false,
               };
 
             current.used =
               true;
 
             /*
-             * 紫は位置依存。
+             * 紫は「正解のどこかに同じ五十音行がある」ヒント。
+             * 位置情報は持たず、1度でも紫になれば「行」バッジを表示します。
              */
             if (
               tile.state ===
               'near'
             ) {
-              const position =
-                index + 1;
-
-              if (
-                !current
-                  .nearPositions
-                  .includes(
-                    position,
-                  )
-              ) {
-                current
-                  .nearPositions
-                  .push(
-                    position,
-                  );
-              }
+              current.near =
+                true;
             }
 
             /*
@@ -1860,11 +2150,16 @@ export default function App() {
    * Loading
    * ======================================================= */
 
-  if (!answer) {
+  if (
+    !answer ||
+    !restoreReady
+  ) {
     return (
       <main className="app">
         <div className="loading">
-          ことばを準備しています…
+          {!answer
+            ? 'ことばを準備しています…'
+            : '前回の続きがないか確認しています…'}
         </div>
       </main>
     );
@@ -1977,7 +2272,7 @@ export default function App() {
 
           <span>
             <i className="legend-swatch near" />
-            同じ位置・同じ行
+            同じ行の文字がある
           </span>
 
           <span>
@@ -2255,7 +2550,7 @@ export default function App() {
           )}
 
           <p className="near-key-help">
-            紫の①〜⑤は、その位置で同じ五十音行だったことを示します
+            紫の「行」は、正解のどこかに同じ五十音行の文字があることを示します
           </p>
         </section>
       </section>
@@ -2312,7 +2607,7 @@ export default function App() {
                 あ
               </span>
 
-              その位置の正解文字と同じ五十音行
+              正解のどこかに同じ五十音行の文字がある
             </div>
 
             <div className="help-row">

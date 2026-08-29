@@ -22,6 +22,13 @@ export type DiscordConnection = {
   user: DiscordUser | null;
   guildId: string | null;
   channelId: string | null;
+
+  /*
+   * サーバー側で「本人の保存データだけ」を復元するために使います。
+   * localStorageには保存せず、Activityを開いている間だけメモリで保持します。
+   */
+  accessToken: string | null;
+
   error: string | null;
 };
 
@@ -45,6 +52,10 @@ const TOKEN_CACHE_KEY =
 
 let discordSdk:
   | DiscordSDK
+  | null = null;
+
+let activeAccessToken:
+  | string
   | null = null;
 
 /* =========================================================
@@ -164,6 +175,9 @@ async function authenticateWithCachedToken() {
       });
 
     if (auth?.user) {
+      activeAccessToken =
+        cached;
+
       console.log(
         "Discord認証情報を再利用しました。",
       );
@@ -180,6 +194,9 @@ async function authenticateWithCachedToken() {
   sessionStorage.removeItem(
     TOKEN_CACHE_KEY,
   );
+
+  activeAccessToken =
+    null;
 
   return null;
 }
@@ -198,6 +215,7 @@ export async function connectDiscord():
       user: null,
       guildId: null,
       channelId: null,
+      accessToken: null,
       error: null,
     };
   }
@@ -210,6 +228,7 @@ export async function connectDiscord():
       user: null,
       guildId: null,
       channelId: null,
+      accessToken: null,
       error: message,
     };
   }
@@ -318,6 +337,9 @@ export async function connectDiscord():
         tokenData.access_token,
       );
 
+      activeAccessToken =
+        tokenData.access_token;
+
       auth =
         await discordSdk.commands.authenticate({
           access_token:
@@ -345,6 +367,9 @@ export async function connectDiscord():
         discordSdk.channelId ??
         null,
 
+      accessToken:
+        activeAccessToken,
+
       error: null,
     };
 
@@ -363,6 +388,7 @@ export async function connectDiscord():
       user: null,
       guildId: null,
       channelId: null,
+      accessToken: null,
       error: message,
     };
   }
