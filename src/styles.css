@@ -1,14 +1,16 @@
 :root {
-  font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    "Noto Sans JP",
-    "Yu Gothic",
-    sans-serif;
-
+  font-family: -apple-system, BlinkMacSystemFont, "Noto Sans JP", "Yu Gothic", sans-serif;
   color: #f8f8f8;
   background: #121213;
   font-synthesis: none;
+  --green: #4aa340;
+  --yellow: #d5b222;
+  --purple: #9057a3;
+  --gray: #686868;
+  --panel: #202124;
+  --border: #3a3a3c;
+  --key-size: 46px;
+  --key-gap: 6px;
 }
 
 * {
@@ -23,457 +25,290 @@ body,
   background: #121213;
 }
 
+body {
+  min-width: 320px;
+  overflow-x: hidden;
+}
+
 button,
 input {
   font: inherit;
 }
 
 button {
-  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .app {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background: #121213;
+  color: #f8f8f8;
 }
 
 /* =========================================================
- * Header
+ * ヘッダー
  * ======================================================= */
 
 .header {
   height: 58px;
-
-  border-bottom:
-    1px solid #3a3a3c;
-
+  border-bottom: 1px solid var(--border);
   display: grid;
-
-  grid-template-columns:
-    48px
-    1fr
-    48px;
-
+  grid-template-columns: 48px 1fr 48px;
   align-items: center;
-
-  padding:
-    0
-    8px;
+  padding: 0 8px;
+  flex: 0 0 auto;
 }
 
 .header h1 {
   margin: 0;
-
   text-align: center;
-
   font-size: 28px;
-
-  letter-spacing:
-    .08em;
-
+  letter-spacing: 0.08em;
   font-weight: 800;
 }
 
 .icon-button {
+  width: 40px;
+  height: 40px;
   border: 0;
-
-  background:
-    transparent;
-
+  border-radius: 8px;
+  background: transparent;
   color: #ddd;
-
   font-size: 22px;
-
   cursor: pointer;
 }
 
+.icon-button:hover {
+  background: #202124;
+}
+
 /* =========================================================
- * Game
+ * ゲーム本体
+ *
+ * 盤面自体は従来の大きさを維持し、使用文字キーボードだけ
+ * 十分な横幅を使えるよう、親領域を広げています。
  * ======================================================= */
 
 .game-area {
-  width:
-    min(
-      100%,
-      620px
-    );
-
-  margin:
-    0 auto;
-
-  padding:
-    16px
-    16px
-    30px;
-
+  width: min(100%, 820px);
+  margin: 0 auto;
+  padding: 16px 16px 30px;
   display: flex;
-
-  flex-direction:
-    column;
-
-  align-items:
-    center;
+  flex-direction: column;
+  align-items: center;
 }
 
 .puzzle-label {
   color: #a7a7aa;
-
   font-weight: 700;
+  margin-bottom: 10px;
+}
 
-  margin-bottom:
-    12px;
+.participant-status {
+  margin: -2px 0 10px;
+  color: #f1f1f1;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
 }
 
 /* =========================================================
- * Board
+ * 盤面
  * ======================================================= */
 
 .board {
-  width:
-    min(
-      350px,
-      78vw
-    );
-
+  width: min(350px, 78vw);
   display: flex;
-
-  flex-direction:
-    column;
-
+  flex-direction: column;
   gap: 6px;
-
-  cursor: text;
 }
 
 .board-row {
   display: grid;
-
-  grid-template-columns:
-    repeat(
-      5,
-      1fr
-    );
-
+  grid-template-columns: repeat(5, 1fr);
   gap: 6px;
 }
 
 .tile {
   aspect-ratio: 1;
-
-  border:
-    2px solid #3a3a3c;
-
+  border: 2px solid var(--border);
   display: grid;
-
-  place-items:
-    center;
-
-  font-size:
-    clamp(
-      24px,
-      7vw,
-      38px
-    );
-
+  place-items: center;
+  font-size: clamp(24px, 7vw, 38px);
   font-weight: 800;
-
   line-height: 1;
+  text-transform: uppercase;
 }
 
 .tile:not(:empty) {
-  border-color:
-    #565758;
+  border-color: #565758;
 }
 
 .tile.revealed {
-  animation:
-    flip
-    .55s
-    ease
-    both;
+  animation: flip 0.55s ease both;
 }
 
-/* 指定色 */
-
 .tile.correct {
-  background:
-    #4aa340;
-
-  border-color:
-    #4aa340;
+  background: var(--green);
+  border-color: var(--green);
 }
 
 .tile.present {
-  background:
-    #d5b222;
-
-  border-color:
-    #d5b222;
+  background: var(--yellow);
+  border-color: var(--yellow);
 }
 
 .tile.near {
-  background:
-    #9057a3;
-
-  border-color:
-    #9057a3;
+  background: var(--purple);
+  border-color: var(--purple);
 }
 
 .tile.absent {
-  background:
-    #686868;
-
-  border-color:
-    #686868;
+  background: var(--gray);
+  border-color: var(--gray);
 }
 
 @keyframes flip {
   0% {
-    transform:
-      rotateX(0);
+    transform: rotateX(0);
   }
 
   45% {
-    transform:
-      rotateX(90deg);
+    transform: rotateX(90deg);
   }
 
   55% {
-    transform:
-      rotateX(90deg);
+    transform: rotateX(90deg);
   }
 
   100% {
-    transform:
-      rotateX(0);
+    transform: rotateX(0);
   }
 }
 
 /* =========================================================
- * Input
- * ======================================================= */
-
-.input-panel {
-  width:
-    min(
-      420px,
-      100%
-    );
-
-  margin-top:
-    22px;
-
-  display: grid;
-
-  grid-template-columns:
-    1fr
-    86px;
-
-  gap: 8px;
-}
-
-.input-panel input {
-  min-width: 0;
-
-  border:
-    1px solid #565758;
-
-  background:
-    #202124;
-
-  color: #fff;
-
-  border-radius:
-    6px;
-
-  padding:
-    13px
-    14px;
-
-  font-size:
-    18px;
-
-  outline: none;
-}
-
-.input-panel input:focus {
-  border-color:
-    #818384;
-}
-
-.input-panel button {
-  border: 0;
-
-  border-radius:
-    6px;
-
-  background:
-    #4aa340;
-
-  color: #fff;
-
-  font-weight: 800;
-
-  cursor: pointer;
-}
-
-/* =========================================================
- * Legend
+ * 凡例
  * ======================================================= */
 
 .legend {
-  width:
-    min(
-      420px,
-      100%
-    );
-
-  margin-top:
-    14px;
-
+  width: min(420px, 100%);
+  margin-top: 14px;
   display: grid;
-
-  grid-template-columns:
-    repeat(
-      2,
-      minmax(
-        0,
-        1fr
-      )
-    );
-
-  gap:
-    6px
-    14px;
-
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
   color: #aaa;
-
-  font-size:
-    11px;
+  font-size: 11px;
 }
 
 .legend span {
   display: flex;
-
-  align-items:
-    center;
-
+  align-items: center;
   gap: 6px;
-
-  white-space:
-    nowrap;
+  white-space: nowrap;
 }
 
 .legend-swatch {
   width: 12px;
   height: 12px;
-
-  border-radius:
-    2px;
-
-  flex:
-    0
-    0
-    auto;
+  border-radius: 2px;
+  flex: 0 0 auto;
 }
 
 .legend-swatch.correct {
-  background:
-    #4aa340;
+  background: var(--green);
 }
 
 .legend-swatch.present {
-  background:
-    #d5b222;
+  background: var(--yellow);
 }
 
 .legend-swatch.near {
-  background:
-    #9057a3;
+  background: var(--purple);
 }
 
 .legend-swatch.absent {
-  background:
-    #686868;
+  background: var(--gray);
 }
 
 /* =========================================================
- * Messages
+ * 入力
  * ======================================================= */
 
+.input-panel {
+  width: min(420px, 100%);
+  margin-top: 22px;
+  display: grid;
+  grid-template-columns: 1fr 86px;
+  gap: 8px;
+}
+
+.input-panel input {
+  min-width: 0;
+  border: 1px solid #565758;
+  background: var(--panel);
+  color: #fff;
+  border-radius: 6px;
+  padding: 13px 14px;
+  font-size: 18px;
+  outline: none;
+}
+
+.input-panel input:focus {
+  border-color: #818384;
+}
+
+.input-panel button {
+  border: 0;
+  border-radius: 6px;
+  background: var(--green);
+  color: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.input-panel button:hover {
+  filter: brightness(1.07);
+}
+
+.hint {
+  color: #8d8d91;
+  font-size: 12px;
+  margin: 12px 0 0;
+}
+
 .toast {
-  margin-top:
-    14px;
-
-  background:
-    #f8f8f8;
-
-  color:
-    #121213;
-
-  border-radius:
-    6px;
-
-  padding:
-    9px
-    14px;
-
+  margin-top: 14px;
+  background: #f8f8f8;
+  color: #121213;
+  border-radius: 6px;
+  padding: 9px 14px;
   font-weight: 700;
 }
 
 .result-card {
-  margin-top:
-    18px;
-
-  padding:
-    14px
-    18px;
-
-  border-radius:
-    8px;
-
-  background:
-    #202124;
-
+  margin-top: 18px;
+  padding: 14px 18px;
+  border-radius: 8px;
+  background: var(--panel);
   display: flex;
-
-  flex-direction:
-    column;
-
+  flex-direction: column;
   gap: 5px;
-
-  align-items:
-    center;
+  align-items: center;
+  text-align: center;
 }
 
 .result-card span {
-  color:
-    #c6c6c8;
-
-  font-size:
-    14px;
+  color: #c6c6c8;
+  font-size: 14px;
 }
 
 .save-status {
-  margin-top:
-    6px;
-
-  font-size:
-    12px !important;
-}
-
-.hint {
-  color:
-    #8d8d91;
-
-  font-size:
-    12px;
-
-  margin:
-    10px
-    0
-    0;
+  display: block;
+  margin-top: 3px;
+  font-size: 12px !important;
+  color: #9fa1a6 !important;
 }
 
 .loading {
@@ -482,599 +317,449 @@ button {
 }
 
 /* =========================================================
- * 五十音キーボード
+ * 使用した文字キーボード
+ *
+ * 重要:
+ * ・各キーを固定サイズにする
+ * ・flex-shrinkで潰さない
+ * ・基本文字は10列、濁音・小文字は9列を必ず維持
+ * ・画面が狭い場合だけキーボード内部を横スクロール
  * ======================================================= */
 
 .kana-keyboard {
-  width:
-    min(
-      560px,
-      100%
-    );
-
-  margin-top:
-    22px;
-
-  padding-top:
-    14px;
-
-  border-top:
-    1px solid #2d2d2f;
+  width: min(100%, 620px);
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid #2d2d30;
+  align-self: center;
 }
 
 .keyboard-title-row {
+  width: 100%;
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
 
-  align-items:
-    center;
-
-  justify-content:
-    space-between;
-
-  margin-bottom:
-    10px;
-
-  color:
-    #bcbcc0;
-
-  font-size:
-    12px;
-
-  font-weight:
-    700;
+.keyboard-title-row > span {
+  color: #d7dadc;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .keyboard-toggle {
-  border:
-    1px solid #4b4b4e;
-
-  border-radius:
-    6px;
-
-  background:
-    #202124;
-
-  color:
-    #ddd;
-
-  padding:
-    5px
-    9px;
-
+  flex: 0 0 auto;
+  border: 1px solid #565758;
+  background: #202124;
+  color: #f1f1f1;
+  border-radius: 7px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
-
-  font-size:
-    11px;
 }
 
+.keyboard-toggle:hover {
+  border-color: #818384;
+  background: #292a2d;
+}
+
+/*
+ * BASIC_KEYS / EXTRA_KEYS は「横5段 × 縦の行グループ」です。
+ * ここでは5段を縦に並べ、各段の列数を固定します。
+ */
 .basic-keyboard {
-  display: flex;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0 8px;
+  scrollbar-width: thin;
+  scrollbar-color: #565758 transparent;
+  overscroll-behavior-x: contain;
+}
 
-  flex-direction:
-    column;
+.basic-keyboard::-webkit-scrollbar {
+  height: 7px;
+}
 
-  gap: 4px;
+.basic-keyboard::-webkit-scrollbar-thumb {
+  background: #565758;
+  border-radius: 999px;
 }
 
 .kana-key-row {
   display: grid;
-
-  grid-template-columns:
-    repeat(
-      10,
-      minmax(
-        0,
-        1fr
-      )
-    );
-
-  gap: 4px;
+  grid-template-columns: repeat(10, var(--key-size));
+  gap: var(--key-gap);
+  width: max-content;
+  min-width: max-content;
+  margin: 0 auto var(--key-gap);
 }
 
-.extra-keyboard {
-  display: grid;
+.kana-key-row:last-child {
+  margin-bottom: 0;
+}
 
-  grid-template-columns:
-    repeat(
-      10,
-      minmax(
-        0,
-        1fr
-      )
-    );
-
-  gap: 4px;
+/*
+ * 濁音・小文字側は9列。
+ * が行 / ざ行 / だ行 / ば行 / ぱ行 / 小さいあ行 /
+ * 小さいや行 / っ / ー が、それぞれ縦列になります。
+ */
+.extra-keyboard .kana-key-row {
+  grid-template-columns: repeat(9, var(--key-size));
 }
 
 .kana-key {
-  min-width: 0;
-
-  height: 42px;
-
-  border:
-    1px solid #4a4a4d;
-
-  border-radius:
-    4px;
-
-  background:
-    #d3d6da;
-
-  color:
-    #121213;
-
-  font-weight: 700;
-
-  cursor: pointer;
-
   position: relative;
+  width: var(--key-size);
+  min-width: var(--key-size);
+  max-width: var(--key-size);
+  height: var(--key-size);
+  min-height: var(--key-size);
+  max-height: var(--key-size);
+  padding: 0;
+  margin: 0;
+  border: 1px solid #4a4b4d;
+  border-radius: 5px;
+  background: #d3d6da;
+  color: #121213;
+  display: grid;
+  place-items: center;
+  flex: 0 0 var(--key-size);
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+  transition:
+    transform 0.08s ease,
+    filter 0.12s ease,
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
 
-  display: flex;
+button.kana-key:hover {
+  filter: brightness(1.06);
+}
 
-  align-items:
-    center;
-
-  justify-content:
-    center;
+button.kana-key:active {
+  transform: translateY(1px) scale(0.98);
 }
 
 .kana-key.blank {
   visibility: hidden;
+  pointer-events: none;
+  border: 0;
+  background: transparent;
 }
 
-.kana-key:hover {
-  filter:
-    brightness(
-      1.08
-    );
+.kana-key-char {
+  display: block;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  pointer-events: none;
 }
 
+/* 使用済みだが、色ヒントがないキー */
+.kana-key.key-used {
+  border-color: #5c5d60;
+}
+
+/* 灰 */
 .kana-key.key-absent {
-  background:
-    #686868;
-
-  border-color:
-    #686868;
-
+  background: var(--gray);
+  border-color: var(--gray);
   color: #fff;
 }
 
+/* 黄 */
 .kana-key.key-present {
-  background:
-    #d5b222;
-
-  border-color:
-    #d5b222;
-
+  background: var(--yellow);
+  border-color: var(--yellow);
   color: #fff;
 }
 
+/* 緑 */
 .kana-key.key-correct {
-  background:
-    #4aa340;
-
-  border-color:
-    #4aa340;
-
+  background: var(--green);
+  border-color: var(--green);
   color: #fff;
 }
 
 /*
- * 紫は位置依存なので
- * キー全体を紫にはしません。
- *
- * 紫ヒントしかない文字は
- * 紫の枠だけ付けます。
+ * 紫は「正解のどこかに同じ行がある」。
+ * 緑・黄まで判明している文字は、その強い情報を優先します。
  */
-.kana-key.key-has-near:not(
-  .key-absent
-):not(
-  .key-present
-):not(
-  .key-correct
-) {
-  border:
-    2px solid #9057a3;
-
-  background:
-    #d3d6da;
-}
-
-.kana-key-char {
-  line-height: 1;
+.kana-key.key-has-near:not(.key-correct):not(.key-present) {
+  background: var(--purple);
+  border-color: var(--purple);
+  color: #fff;
 }
 
 .near-position-list {
-  position:
-    absolute;
-
+  position: absolute;
   right: 2px;
   bottom: 2px;
-
   display: flex;
-
-  gap: 1px;
+  pointer-events: none;
 }
 
 .near-position-badge {
-  width: 12px;
-  height: 12px;
-
-  border-radius:
-    50%;
-
-  background:
-    #9057a3;
-
-  color:
-    #fff;
-
-  font-size:
-    8px;
-
-  line-height:
-    12px;
-
-  text-align:
-    center;
-
-  font-weight:
-    800;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(18, 18, 19, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .keyboard-actions {
+  width: min(420px, 100%);
+  margin: 12px auto 0;
   display: grid;
-
-  grid-template-columns:
-    1fr
-    1fr;
-
-  gap:
-    8px;
-
-  margin-top:
-    8px;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .keyboard-actions button {
-  border:
-    1px solid #4a4a4d;
-
-  border-radius:
-    6px;
-
-  padding:
-    9px;
-
-  background:
-    #2c2d2f;
-
-  color:
-    #fff;
-
-  cursor:
-    pointer;
-
-  font-weight:
-    700;
+  min-height: 42px;
+  border: 1px solid #565758;
+  border-radius: 7px;
+  background: #202124;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
 }
 
-.keyboard-actions
-.keyboard-submit {
-  background:
-    #4aa340;
+.keyboard-actions button:hover {
+  background: #292a2d;
+}
 
-  border-color:
-    #4aa340;
+.keyboard-actions .keyboard-submit {
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.keyboard-actions .keyboard-submit:hover {
+  filter: brightness(1.07);
+  background: var(--green);
 }
 
 .near-key-help {
-  color:
-    #77777c;
-
-  font-size:
-    10px;
-
-  text-align:
-    center;
-
-  margin:
-    7px
-    0
-    0;
+  width: 100%;
+  margin: 10px 0 0;
+  color: #85868a;
+  font-size: 10px;
+  line-height: 1.65;
+  text-align: left;
 }
 
 /* =========================================================
- * Modal
+ * モーダル
  * ======================================================= */
 
 .modal-backdrop {
   position: fixed;
-
   inset: 0;
-
-  z-index: 100;
-
-  background:
-    rgba(
-      0,
-      0,
-      0,
-      .68
-    );
-
+  z-index: 1000;
   display: grid;
-
-  place-items:
-    center;
-
-  padding:
-    20px;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.7);
 }
 
 .modal {
-  width:
-    min(
-      440px,
-      100%
-    );
-
-  max-height:
-    85vh;
-
-  overflow-y:
-    auto;
-
-  background:
-    #202124;
-
-  border:
-    1px solid #3a3a3c;
-
-  border-radius:
-    10px;
-
-  padding:
-    22px;
-
-  box-shadow:
-    0
-    15px
-    50px
-    rgba(
-      0,
-      0,
-      0,
-      .5
-    );
+  width: min(440px, 100%);
+  max-height: min(78vh, 680px);
+  overflow-y: auto;
+  border: 1px solid #4a4b4d;
+  border-radius: 12px;
+  background: #202124;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+  padding: 22px;
 }
 
 .modal h2 {
-  margin:
-    0
-    0
-    15px;
-
-  text-align:
-    center;
+  margin: 0 0 18px;
+  text-align: center;
+  font-size: 24px;
 }
 
 .modal p {
-  color:
-    #c5c5c8;
-
-  line-height:
-    1.65;
+  color: #d0d0d2;
+  font-size: 14px;
+  line-height: 1.7;
 }
 
 .modal > button {
   width: 100%;
-
-  margin-top:
-    16px;
-
+  min-height: 44px;
+  margin-top: 14px;
   border: 0;
-
-  border-radius:
-    6px;
-
-  padding:
-    10px;
-
-  background:
-    #4aa340;
-
-  color:
-    #fff;
-
-  font-weight:
-    800;
-
-  cursor:
-    pointer;
+  border-radius: 7px;
+  background: var(--green);
+  color: #fff;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .help-row {
-  display: flex;
-
-  align-items:
-    center;
-
-  gap:
-    12px;
-
-  margin:
-    9px
-    0;
-
-  color:
-    #ddd;
-
-  font-size:
-    13px;
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 12px;
+  align-items: center;
+  margin: 10px 0;
+  color: #e1e1e2;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .help-tile {
-  width: 38px;
-  height: 38px;
-
-  border-radius:
-    3px;
-
+  width: 42px;
+  height: 42px;
   display: grid;
-
-  place-items:
-    center;
-
+  place-items: center;
+  border-radius: 3px;
+  font-size: 20px;
+  font-weight: 800;
   color: #fff;
-
-  font-weight:
-    800;
-
-  flex:
-    0
-    0
-    auto;
 }
 
 .help-tile.correct {
-  background:
-    #4aa340;
+  background: var(--green);
 }
 
 .help-tile.present {
-  background:
-    #d5b222;
+  background: var(--yellow);
 }
 
 .help-tile.near {
-  background:
-    #9057a3;
+  background: var(--purple);
 }
 
 .help-tile.absent {
-  background:
-    #686868;
+  background: var(--gray);
 }
 
 .settings-note {
-  font-size:
-    12px;
+  margin: 8px 0;
+  color: #aeb0b4 !important;
+  font-size: 12px !important;
+}
+
+.discord-error-box {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid #9e3d44;
+  border-radius: 7px;
+  background: #351f21;
+}
+
+.discord-error-box strong {
+  color: #ffb3b8;
+}
+
+.discord-error-box p {
+  margin: 7px 0 0;
+  color: #f0c9cc;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 /* =========================================================
- * Responsive
+ * 小さい画面
  * ======================================================= */
 
-@media (
-  max-width:
-    540px
-) {
+@media (max-width: 620px) {
+  :root {
+    --key-size: 42px;
+    --key-gap: 5px;
+  }
+
   .game-area {
-    padding-left:
-      10px;
-
-    padding-right:
-      10px;
+    width: 100%;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
-  .kana-key {
-    height:
-      38px;
-
-    font-size:
-      13px;
+  .kana-keyboard {
+    width: 100%;
   }
 
-  .extra-keyboard {
-    grid-template-columns:
-      repeat(
-        5,
-        minmax(
-          0,
-          1fr
-        )
-      );
+  /*
+   * 狭い画面で左右のキーを潰さず、横スクロールさせます。
+   * row自体はmax-contentなので文字同士が重なりません。
+   */
+  .kana-key-row {
+    margin-left: 0;
+    margin-right: 0;
   }
 
-  .near-position-badge {
-    width: 11px;
-    height: 11px;
+  .kana-key-char {
+    font-size: 18px;
+  }
 
-    line-height:
-      11px;
+  .keyboard-title-row {
+    gap: 8px;
+  }
 
-    font-size:
-      7px;
+  .near-key-help {
+    font-size: 9px;
   }
 }
 
-@media (
-  max-height:
-    700px
-) {
+@media (max-width: 420px) {
+  :root {
+    --key-size: 40px;
+    --key-gap: 4px;
+  }
+
+  .header h1 {
+    font-size: 24px;
+  }
+
+  .legend {
+    gap: 6px 8px;
+    font-size: 10px;
+  }
+
+  .keyboard-toggle {
+    padding: 6px 9px;
+    font-size: 11px;
+  }
+
+  .kana-key-char {
+    font-size: 17px;
+  }
+}
+
+@media (max-height: 700px) {
   .header {
     height: 48px;
   }
 
   .game-area {
-    padding-top:
-      8px;
+    padding-top: 8px;
   }
 
   .board {
-    width:
-      min(
-        310px,
-        68vh
-      );
+    width: min(310px, 68vh);
   }
 
   .input-panel {
-    margin-top:
-      12px;
+    margin-top: 12px;
   }
-}
-/* =========================================================
- * Discord接続エラー表示
- * ======================================================= */
 
-.discord-error-box {
-  margin-top: 14px;
-  padding: 10px 12px;
-
-  border:
-    1px solid #8c4444;
-
-  border-radius:
-    6px;
-
-  background:
-    #2a1d1d;
-
-  color:
-    #f0c4c4;
-}
-
-.discord-error-box strong {
-  display: block;
-
-  margin-bottom:
-    5px;
-}
-
-.discord-error-box p {
-  margin: 0;
-
-  color:
-    #dcaeae;
-
-  font-size:
-    11px;
-
-  line-height:
-    1.55;
-
-  overflow-wrap:
-    anywhere;
+  .kana-keyboard {
+    margin-top: 18px;
+  }
 }
