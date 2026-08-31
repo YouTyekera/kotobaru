@@ -153,50 +153,75 @@ const BASIC_KEYS:
   ],
 ];
 
-const EXTRA_KEYS =
+const EXTRA_KEYS:
+  (string | null)[][] = [
+  /*
+   * 基本文字と同じく、同じ「行」が縦に並ぶ配置。
+   *
+   * が ざ だ ば ぱ ぁ ゃ っ ー
+   * ぎ じ ぢ び ぴ ぃ
+   * ぐ ず づ ぶ ぷ ぅ ゅ
+   * げ ぜ で べ ぺ ぇ
+   * ご ぞ ど ぼ ぽ ぉ ょ
+   *
+   * 小書き文字は基本文字とは別の列として表示します。
+   */
   [
     'が',
-    'ぎ',
-    'ぐ',
-    'げ',
-    'ご',
-
     'ざ',
-    'じ',
-    'ず',
-    'ぜ',
-    'ぞ',
-
     'だ',
-    'ぢ',
-    'づ',
-    'で',
-    'ど',
-
     'ば',
-    'び',
-    'ぶ',
-    'べ',
-    'ぼ',
-
     'ぱ',
-    'ぴ',
-    'ぷ',
-    'ぺ',
-    'ぽ',
-
     'ぁ',
-    'ぃ',
-    'ぅ',
-    'ぇ',
-    'ぉ',
-
     'ゃ',
-    'ゅ',
-    'ょ',
     'っ',
     'ー',
-  ];
+  ],
+  [
+    'ぎ',
+    'じ',
+    'ぢ',
+    'び',
+    'ぴ',
+    'ぃ',
+    null,
+    null,
+    null,
+  ],
+  [
+    'ぐ',
+    'ず',
+    'づ',
+    'ぶ',
+    'ぷ',
+    'ぅ',
+    'ゅ',
+    null,
+    null,
+  ],
+  [
+    'げ',
+    'ぜ',
+    'で',
+    'べ',
+    'ぺ',
+    'ぇ',
+    null,
+    null,
+    null,
+  ],
+  [
+    'ご',
+    'ぞ',
+    'ど',
+    'ぼ',
+    'ぽ',
+    'ぉ',
+    'ょ',
+    null,
+    null,
+  ],
+];
 
 /* =========================================================
  * カタカナ → ひらがな
@@ -2496,29 +2521,54 @@ export default function App() {
           )}
 
           {showExtraKeys && (
-            <div className="extra-keyboard">
+            <div className="basic-keyboard extra-keyboard">
               {EXTRA_KEYS.map(
                 (
-                  char,
+                  row,
+                  rowIndex,
                 ) => (
-                  <KanaKey
+                  <div
+                    className="kana-key-row"
                     key={
-                      char
+                      `extra-row-${rowIndex}`
                     }
-                    char={
-                      char
-                    }
-                    usage={
-                      keyUsage.get(
-                        toKatakana(
-                          char,
-                        ),
-                      )
-                    }
-                    onPress={
-                      pressKanaKey
-                    }
-                  />
+                  >
+                    {row.map(
+                      (
+                        char,
+                        index,
+                      ) =>
+                        char
+                          ? (
+                            <KanaKey
+                              key={
+                                char
+                              }
+                              char={
+                                char
+                              }
+                              usage={
+                                keyUsage.get(
+                                  toKatakana(
+                                    char,
+                                  ),
+                                )
+                              }
+                              onPress={
+                                pressKanaKey
+                              }
+                            />
+                          )
+                          : (
+                            <span
+                              key={
+                                `extra-blank-${rowIndex}-${index}`
+                              }
+                              className="kana-key blank"
+                            />
+                          ),
+                    )}
+                  </div>
                 ),
               )}
             </div>
@@ -2550,7 +2600,7 @@ export default function App() {
           )}
 
           <p className="near-key-help">
-            紫の「行」は、正解のどこかに同じ五十音行の文字があることを示します
+            紫の「行」は、正解のどこかに同じ行の文字があることを示します。基本文字と小文字は別扱いで、ぁぃぅぇぉ同士・ゃゅょ同士はそれぞれ小文字だけの行として判定します。濁音・半濁音も別の行です
           </p>
         </section>
       </section>
@@ -2607,7 +2657,7 @@ export default function App() {
                 あ
               </span>
 
-              正解のどこかに同じ五十音行の文字がある
+              正解のどこかに同じ行の文字がある。基本文字と小文字は別扱いで、ぁぃぅぇぉ同士・ゃゅょ同士はそれぞれ紫判定する
             </div>
 
             <div className="help-row">
