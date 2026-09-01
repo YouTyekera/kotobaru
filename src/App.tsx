@@ -554,8 +554,8 @@ export default function App() {
     >(null);
 
   const [
-    discordAccessToken,
-    setDiscordAccessToken,
+    kotobaruSessionToken,
+    setKotobaruSessionToken,
   ] =
     useState<
       string | null
@@ -791,8 +791,8 @@ export default function App() {
             discord.guildId,
           );
 
-          setDiscordAccessToken(
-            discord.accessToken,
+          setKotobaruSessionToken(
+            discord.sessionToken,
           );
 
           setDiscordError(
@@ -1052,7 +1052,7 @@ export default function App() {
           !insideDiscord ||
           !discordUser ||
           !guildId ||
-          !discordAccessToken
+          !kotobaruSessionToken
         ) {
           if (
             !localGame &&
@@ -1089,7 +1089,7 @@ export default function App() {
           try {
             const response =
               await fetch(
-                '/api/kotobaru/state',
+                '/data/state',
                 {
                   method:
                     'POST',
@@ -1099,7 +1099,7 @@ export default function App() {
                       'application/json',
 
                     Authorization:
-                      `Bearer ${discordAccessToken}`,
+                      `Bearer ${kotobaruSessionToken}`,
                   },
 
                   body:
@@ -1306,7 +1306,7 @@ export default function App() {
     insideDiscord,
     discordUser?.id,
     guildId,
-    discordAccessToken,
+    kotobaruSessionToken,
   ]);
 
   /* =========================================================
@@ -1497,7 +1497,8 @@ export default function App() {
     ) => {
       if (
         !discordUser ||
-        !guildId
+        !guildId ||
+        !kotobaruSessionToken
       ) {
         return;
       }
@@ -1538,7 +1539,7 @@ export default function App() {
       try {
         const response =
           await fetch(
-            '/api/kotobaru/progress',
+            '/data/progress',
             {
               method:
                 'POST',
@@ -1546,6 +1547,8 @@ export default function App() {
               headers: {
                 'Content-Type':
                   'application/json',
+                Authorization:
+                  `Bearer ${kotobaruSessionToken}`,
               },
 
               body:
@@ -1596,13 +1599,46 @@ export default function App() {
 
         if (!response.ok) {
           console.warn(
-            '途中経過の共有に失敗しました:',
+            '途中経過のD1保存に失敗しました:',
             response.status,
             await response
               .text()
               .catch(
                 () => '',
               ),
+          );
+          return;
+        }
+
+        const stored =
+          await response.json() as {
+            sessionId?: string;
+          };
+
+        /*
+         * D1保存を先に確定し、Discord Previewは後追い同期。
+         * Render/Discordが制限中でもゲームデータは失いません。
+         */
+        if (stored.sessionId) {
+          void fetch(
+            '/api/kotobaru/preview-sync',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+              body:
+                JSON.stringify({
+                  guildId,
+                  date: dateKey,
+                  puzzleNumber: number,
+                  sessionId:
+                    stored.sessionId,
+                }),
+            },
+          ).catch(
+            () => null,
           );
         }
       } catch (error) {
@@ -1690,7 +1726,8 @@ export default function App() {
     ) => {
       if (
         !discordUser ||
-        !guildId
+        !guildId ||
+        !kotobaruSessionToken
       ) {
         console.warn(
           'Discordユーザーを取得できていないため結果送信を省略します。',
@@ -1776,7 +1813,7 @@ export default function App() {
         try {
           const response =
             await fetch(
-              '/api/kotobaru/result',
+              '/data/result',
               {
                 method:
                   'POST',
@@ -1784,6 +1821,8 @@ export default function App() {
                 headers: {
                   'Content-Type':
                     'application/json',
+                  Authorization:
+                    `Bearer ${kotobaruSessionToken}`,
                 },
 
                 body:
@@ -1796,13 +1835,41 @@ export default function App() {
           if (
             response.ok
           ) {
+            const stored =
+              await response.json() as {
+                sessionId?: string;
+              };
+
             console.log(
-              'ことばル結果保存成功',
+              'ことばル結果をD1へ保存しました',
             );
 
             setSaveStatus(
               'saved',
             );
+
+            if (stored.sessionId) {
+              void fetch(
+                '/api/kotobaru/preview-sync',
+                {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type':
+                      'application/json',
+                  },
+                  body:
+                    JSON.stringify({
+                      guildId,
+                      date: dateKey,
+                      puzzleNumber: number,
+                      sessionId:
+                        stored.sessionId,
+                    }),
+                },
+              ).catch(
+                () => null,
+              );
+            }
 
             return;
           }

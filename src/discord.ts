@@ -23,6 +23,7 @@ export type DiscordConnection = {
   guildId: string | null;
   channelId: string | null;
   accessToken: string | null;
+  sessionToken: string | null;
   error: string | null;
 };
 
@@ -37,6 +38,13 @@ export type KotobaruPresence = {
 type PersistedTokenCache = {
   accessToken: string;
   expiresAt: number;
+};
+
+type PersistedKotobaruSession = {
+  sessionToken: string;
+  expiresAt: number;
+  guildId: string;
+  user: DiscordUser;
 };
 
 /* =========================================================
@@ -57,6 +65,9 @@ const TOKEN_CACHE_KEY =
 
 const OAUTH_COOLDOWN_KEY =
   `kotobaru-discord-oauth-cooldown:${clientId || "unknown"}`;
+
+const DATA_SESSION_CACHE_PREFIX =
+  `kotobaru-data-session-v1:${clientId || "unknown"}:`;
 
 let discordSdk:
   | DiscordSDK
@@ -254,6 +265,195 @@ function clearOAuthCooldown() {
 }
 
 /* =========================================================
+ * ことばル独自セッション
+ *
+ * Discord OAuthが一時的に429でも、過去に認証済みなら
+ * D1の盤面保存・復元を継続できるようにします。
+ * ======================================================= */
+
+function dataSessionCacheKey(
+  guildId: string,
+) {
+  return `${DATA_SESSION_CACHE_PREFIX}${guildId}`;
+}
+
+function readKotobaruSession(
+  guildId: string | null,
+): PersistedKotobaruSession | null {
+  if (!guildId) {
+    return null;
+  }
+
+  try {
+    const raw =
+      localStorage.getItem(
+        dataSessionCacheKey(guildId),
+      );
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed =
+      JSON.parse(raw) as
+        Partial<PersistedKotobaruSession>;
+
+    if (
+      typeof parsed.sessionToken !== "string" ||
+      !parsed.sessionToken ||
+      typeof parsed.expiresAt !== "number" ||
+      parsed.expiresAt - Date.now() < 5 * 60 * 1000 ||
+      parsed.guildId !== guildId ||
+      !parsed.user?.id
+    ) {
+      localStorage.removeItem(
+        dataSessionCacheKey(guildId),
+      );
+      return null;
+    }
+
+    return parsed as PersistedKotobaruSession;
+  } catch {
+    localStorage.removeItem(
+      dataSessionCacheKey(guildId),
+    );
+    return null;
+  }
+}
+
+function writeKotobaruSession(
+  guildId: string,
+  sessionToken: string,
+  expiresIn: number,
+  user: DiscordUser,
+) {
+  const safeExpiresIn =
+    Number.isFinite(expiresIn) &&
+    expiresIn > 0
+      ? expiresIn
+      : 7 * 24 * 60 * 60;
+
+  const value: PersistedKotobaruSession = {
+    guildId,
+    sessionToken,
+    expiresAt:
+      Date.now() +
+      safeExpiresIn * 1000,
+    user,
+  };
+
+  localStorage.setItem(
+    dataSessionCacheKey(guildId),
+    JSON.stringify(value),
+  );
+}
+
+async function ensureKotobaruSession(
+  guildId: string | null,
+  accessToken: string | null,
+  fallbackUser: DiscordUser | null,
+): Promise<PersistedKotobaruSession | null> {
+  const cached =
+    readKotobaruSession(guildId);
+
+  if (cached) {
+    return cached;
+  }
+
+  if (
+    !guildId ||
+    !accessToken
+  ) {
+    return null;
+  }
+
+  try {
+    const response =
+      await fetch(
+        "/data/session",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+            Authorization:
+              `Bearer ${accessToken}`,
+          },
+          body:
+            JSON.stringify({
+              guildId,
+            }),
+        },
+      );
+
+    if (!response.ok) {
+      console.warn(
+        "ことばルD1セッション発行失敗:",
+        response.status,
+      );
+      return null;
+    }
+
+    const data =
+      await response.json() as {
+        sessionToken?: string;
+        expiresIn?: number;
+        user?: {
+          userId?: string;
+          username?: string;
+          globalName?: string | null;
+          avatar?: string | null;
+        };
+      };
+
+    if (!data.sessionToken) {
+      return null;
+    }
+
+    const user: DiscordUser = {
+      id:
+        data.user?.userId ||
+        fallbackUser?.id ||
+        "",
+      username:
+        data.user?.username ||
+        fallbackUser?.username ||
+        "Discordユーザー",
+      global_name:
+        data.user?.globalName ??
+        fallbackUser?.global_name ??
+        null,
+      avatar:
+        data.user?.avatar ??
+        fallbackUser?.avatar ??
+        null,
+    };
+
+    if (!user.id) {
+      return null;
+    }
+
+    writeKotobaruSession(
+      guildId,
+      data.sessionToken,
+      Number(data.expiresIn) ||
+        7 * 24 * 60 * 60,
+      user,
+    );
+
+    return readKotobaruSession(
+      guildId,
+    );
+  } catch (error) {
+    console.warn(
+      "ことばルD1セッション発行通信失敗:",
+      errorToText(error),
+    );
+    return null;
+  }
+}
+
+/* =========================================================
  * Render起床 + 日次集計確認
  *
  * 重要：OAuthより先に呼びます。
@@ -360,6 +560,7 @@ export async function connectDiscord(): Promise<DiscordConnection> {
       guildId: null,
       channelId: null,
       accessToken: null,
+      sessionToken: null,
       error: null,
     };
   }
@@ -373,6 +574,7 @@ export async function connectDiscord(): Promise<DiscordConnection> {
       guildId: null,
       channelId: null,
       accessToken: null,
+      sessionToken: null,
       error: message,
     };
   }
@@ -462,7 +664,7 @@ export async function connectDiscord(): Promise<DiscordConnection> {
 
       const tokenResponse =
         await fetch(
-          "/api/kotobaru/token",
+          "/data/oauth/token",
           {
             method: "POST",
             headers: {
@@ -559,15 +761,30 @@ export async function connectDiscord(): Promise<DiscordConnection> {
     const user =
       auth.user as DiscordUser;
 
+    const dataSession =
+      await ensureKotobaruSession(
+        contextGuildId,
+        activeAccessToken,
+        user,
+      );
+
     return {
-      user,
+      user:
+        dataSession?.user ||
+        user,
       guildId:
         contextGuildId,
       channelId:
         contextChannelId,
       accessToken:
         activeAccessToken,
-      error: null,
+      sessionToken:
+        dataSession?.sessionToken ||
+        null,
+      error:
+        dataSession
+          ? null
+          : "D1保存用セッションを取得できませんでした。ゲームは端末保存で継続します。",
     };
   } catch (error) {
     const message =
@@ -578,6 +795,31 @@ export async function connectDiscord(): Promise<DiscordConnection> {
       message,
     );
 
+    const cachedSession =
+      readKotobaruSession(
+        contextGuildId,
+      );
+
+    if (cachedSession) {
+      console.warn(
+        "Discord OAuthに失敗しましたが、既存のことばルセッションでゲームを継続します。",
+      );
+
+      return {
+        user:
+          cachedSession.user,
+        guildId:
+          contextGuildId,
+        channelId:
+          contextChannelId,
+        accessToken: null,
+        sessionToken:
+          cachedSession.sessionToken,
+        error:
+          `${message}\n保存・復元はD1セッションで継続できます。`,
+      };
+    }
+
     return {
       user: null,
       guildId:
@@ -585,6 +827,7 @@ export async function connectDiscord(): Promise<DiscordConnection> {
       channelId:
         contextChannelId,
       accessToken: null,
+      sessionToken: null,
       error: message,
     };
   }
