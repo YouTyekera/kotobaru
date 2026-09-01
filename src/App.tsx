@@ -838,44 +838,10 @@ export default function App() {
               );
 
             /*
-             * Renderを起こし、昨日の結果が未投稿なら確認します。
+             * Render起床・昨日の結果確認はdiscord.ts側で
+             * OAuthより前に実行します。
+             * 429時でも日次集計を止めないため、ここでは重複送信しません。
              */
-            try {
-              const response =
-                await fetch(
-                  '/api/kotobaru/awake',
-                  {
-                    method:
-                      'POST',
-
-                    headers: {
-                      'Content-Type':
-                        'application/json',
-                    },
-
-                    body:
-                      JSON.stringify({
-                        guildId:
-                          discord.guildId,
-
-                        channelId:
-                          discord.channelId,
-                      }),
-                  },
-                );
-
-              console.log(
-                'ことばル起動確認:',
-                response.status,
-              );
-            } catch (
-              error
-            ) {
-              console.warn(
-                '起動確認通信失敗:',
-                error,
-              );
-            }
 
           } else {
             setDiscordStatus(

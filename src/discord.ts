@@ -22,13 +22,7 @@ export type DiscordConnection = {
   user: DiscordUser | null;
   guildId: string | null;
   channelId: string | null;
-
-  /*
-   * サーバー側で「本人の保存データだけ」を復元するために使います。
-   * localStorageには保存せず、Activityを開いている間だけメモリで保持します。
-   */
   accessToken: string | null;
-
   error: string | null;
 };
 
@@ -40,6 +34,11 @@ export type KotobaruPresence = {
   attempts: number;
 };
 
+type PersistedTokenCache = {
+  accessToken: string;
+  expiresAt: number;
+};
+
 /* =========================================================
  * Discord Application ID
  * ======================================================= */
@@ -47,8 +46,17 @@ export type KotobaruPresence = {
 const clientId =
   import.meta.env.VITE_DISCORD_CLIENT_ID;
 
+/*
+ * sessionStorageだけだとActivityを閉じるたびに消え、
+ * 毎回 /oauth2/token を叩くことになります。
+ * DiscordのAccess Tokenは通常 expires_in を伴って返るため、
+ * 有効期限の範囲内だけlocalStorageへ保持して再利用します。
+ */
 const TOKEN_CACHE_KEY =
-  "kotobaru-discord-access-token";
+  `kotobaru-discord-access-token-v2:${clientId || "unknown"}`;
+
+const OAUTH_COOLDOWN_KEY =
+  `kotobaru-discord-oauth-cooldown:${clientId || "unknown"}`;
 
 let discordSdk:
   | DiscordSDK
@@ -62,9 +70,7 @@ let activeAccessToken:
  * Discord Activity内か確認
  * ======================================================= */
 
-export function isDiscordActivityEnvironment():
-  boolean {
-
+export function isDiscordActivityEnvironment(): boolean {
   if (
     typeof window === "undefined"
   ) {
@@ -88,13 +94,10 @@ export function isDiscordActivityEnvironment():
 function errorToText(
   error: unknown,
 ): string {
-
   if (
     error instanceof Error
   ) {
-    return (
-      `${error.name}: ${error.message}`
-    );
+    return `${error.name}: ${error.message}`;
   }
 
   if (
@@ -115,32 +118,183 @@ function errorToText(
 }
 
 /* =========================================================
- * Renderを起こす
+ * OAuthキャッシュ
  * ======================================================= */
 
-async function wakeBackend():
-  Promise<void> {
+function readTokenCache():
+  PersistedTokenCache | null {
+  try {
+    const raw =
+      localStorage.getItem(
+        TOKEN_CACHE_KEY,
+      );
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed =
+      JSON.parse(raw) as
+        Partial<PersistedTokenCache>;
+
+    if (
+      typeof parsed.accessToken !==
+        "string" ||
+      !parsed.accessToken ||
+      typeof parsed.expiresAt !==
+        "number"
+    ) {
+      localStorage.removeItem(
+        TOKEN_CACHE_KEY,
+      );
+
+      return null;
+    }
+
+    /*
+     * 有効期限まで5分未満なら再利用しません。
+     */
+    if (
+      parsed.expiresAt -
+        Date.now() <
+      5 * 60 * 1000
+    ) {
+      localStorage.removeItem(
+        TOKEN_CACHE_KEY,
+      );
+
+      return null;
+    }
+
+    return {
+      accessToken:
+        parsed.accessToken,
+      expiresAt:
+        parsed.expiresAt,
+    };
+  } catch {
+    localStorage.removeItem(
+      TOKEN_CACHE_KEY,
+    );
+
+    return null;
+  }
+}
+
+function writeTokenCache(
+  accessToken: string,
+  expiresInSeconds: number,
+) {
+  const safeExpiresIn =
+    Number.isFinite(
+      expiresInSeconds,
+    ) &&
+    expiresInSeconds > 0
+      ? expiresInSeconds
+      : 60 * 60;
+
+  const cache:
+    PersistedTokenCache = {
+    accessToken,
+    expiresAt:
+      Date.now() +
+      safeExpiresIn * 1000,
+  };
+
+  localStorage.setItem(
+    TOKEN_CACHE_KEY,
+    JSON.stringify(cache),
+  );
+}
+
+function clearTokenCache() {
+  localStorage.removeItem(
+    TOKEN_CACHE_KEY,
+  );
+
+  activeAccessToken =
+    null;
+}
+
+function oauthCooldownUntil() {
+  const raw =
+    localStorage.getItem(
+      OAUTH_COOLDOWN_KEY,
+    );
+
+  const value =
+    raw
+      ? Number(raw)
+      : 0;
+
+  return Number.isFinite(
+    value,
+  )
+    ? value
+    : 0;
+}
+
+function setOAuthCooldown(
+  milliseconds:
+    number,
+) {
+  localStorage.setItem(
+    OAUTH_COOLDOWN_KEY,
+    String(
+      Date.now() +
+        milliseconds,
+    ),
+  );
+}
+
+function clearOAuthCooldown() {
+  localStorage.removeItem(
+    OAUTH_COOLDOWN_KEY,
+  );
+}
+
+/* =========================================================
+ * Render起床 + 日次集計確認
+ *
+ * 重要：OAuthより先に呼びます。
+ * OAuthが429でも、昨日の結果公開や起動カード整理を止めません。
+ * ======================================================= */
+
+async function notifyBackendAwake(
+  guildId:
+    string | null,
+  channelId:
+    string | null,
+): Promise<void> {
+  if (!guildId) {
+    return;
+  }
 
   try {
     const response =
       await fetch(
-        "/api/kotobaru/health",
+        "/api/kotobaru/awake",
         {
-          method: "GET",
-          cache: "no-store",
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body:
+            JSON.stringify({
+              guildId,
+              channelId,
+            }),
         },
       );
 
     console.log(
-      "Render health:",
+      "ことばル起動確認:",
       response.status,
     );
   } catch (error) {
-    /*
-     * ここで失敗してもOAuth自体は試します。
-     */
     console.warn(
-      "Render health確認失敗:",
+      "起動確認通信失敗:",
       errorToText(error),
     );
   }
@@ -148,10 +302,6 @@ async function wakeBackend():
 
 /* =========================================================
  * キャッシュ済みAccess Tokenで認証
- *
- * Activityを開き直すたびにOAuth Token交換を行わず、
- * 同一セッション内では既存Tokenを再利用します。
- * Discord APIの429対策にもなります。
  * ======================================================= */
 
 async function authenticateWithCachedToken() {
@@ -160,9 +310,7 @@ async function authenticateWithCachedToken() {
   }
 
   const cached =
-    sessionStorage.getItem(
-      TOKEN_CACHE_KEY,
-    );
+    readTokenCache();
 
   if (!cached) {
     return null;
@@ -171,12 +319,15 @@ async function authenticateWithCachedToken() {
   try {
     const auth =
       await discordSdk.commands.authenticate({
-        access_token: cached,
+        access_token:
+          cached.accessToken,
       });
 
     if (auth?.user) {
       activeAccessToken =
-        cached;
+        cached.accessToken;
+
+      clearOAuthCooldown();
 
       console.log(
         "Discord認証情報を再利用しました。",
@@ -191,12 +342,7 @@ async function authenticateWithCachedToken() {
     );
   }
 
-  sessionStorage.removeItem(
-    TOKEN_CACHE_KEY,
-  );
-
-  activeAccessToken =
-    null;
+  clearTokenCache();
 
   return null;
 }
@@ -205,9 +351,7 @@ async function authenticateWithCachedToken() {
  * Discord接続
  * ======================================================= */
 
-export async function connectDiscord():
-  Promise<DiscordConnection> {
-
+export async function connectDiscord(): Promise<DiscordConnection> {
   if (
     !isDiscordActivityEnvironment()
   ) {
@@ -233,9 +377,13 @@ export async function connectDiscord():
     };
   }
 
-  try {
-    await wakeBackend();
+  let contextGuildId:
+    string | null = null;
 
+  let contextChannelId:
+    string | null = null;
+
+  try {
     discordSdk =
       new DiscordSDK(
         clientId,
@@ -243,24 +391,59 @@ export async function connectDiscord():
 
     await discordSdk.ready();
 
+    contextGuildId =
+      discordSdk.guildId ??
+      null;
+
+    contextChannelId =
+      discordSdk.channelId ??
+      null;
+
+    /*
+     * OAuthより先にRenderを起こします。
+     * これにより429でも日次集計は実行できます。
+     */
+    void notifyBackendAwake(
+      contextGuildId,
+      contextChannelId,
+    );
+
     let auth =
       await authenticateWithCachedToken();
 
     if (!auth) {
+      const cooldown =
+        oauthCooldownUntil();
+
+      if (
+        cooldown >
+        Date.now()
+      ) {
+        const minutes =
+          Math.max(
+            1,
+            Math.ceil(
+              (cooldown -
+                Date.now()) /
+                60000,
+            ),
+          );
+
+        throw new Error(
+          `Discord認証APIが一時制限中です。再試行を抑えるため約${minutes}分は新しいToken交換を行いません。ゲーム画面と昨日の結果公開はこの制限と分離して動作します。`,
+        );
+      }
+
       const authorizeResult =
         await discordSdk.commands.authorize({
           client_id:
             clientId,
-
           response_type:
             "code",
-
           state:
             "",
-
           prompt:
             "none",
-
           scope: [
             "identify",
             "guilds",
@@ -281,14 +464,11 @@ export async function connectDiscord():
         await fetch(
           "/api/kotobaru/token",
           {
-            method:
-              "POST",
-
+            method: "POST",
             headers: {
               "Content-Type":
                 "application/json",
             },
-
             body:
               JSON.stringify({
                 code:
@@ -301,6 +481,23 @@ export async function connectDiscord():
         await tokenResponse.text();
 
       if (
+        tokenResponse.status ===
+        429
+      ) {
+        /*
+         * 今回のCloudflare/IP一時制限は短時間の再試行で悪化します。
+         * 1時間は新規交換を止めます。
+         */
+        setOAuthCooldown(
+          60 * 60 * 1000,
+        );
+
+        throw new Error(
+          `DiscordのToken交換が一時制限されています（HTTP 429）。再試行を1時間抑制しました。昨日の結果公開はOAuthとは別経路で実行されます。応答: ${tokenText.slice(0, 220)}`,
+        );
+      }
+
+      if (
         !tokenResponse.ok
       ) {
         throw new Error(
@@ -311,6 +508,7 @@ export async function connectDiscord():
       let tokenData:
         {
           access_token?: string;
+          expires_in?: number;
         };
 
       try {
@@ -332,13 +530,18 @@ export async function connectDiscord():
         );
       }
 
-      sessionStorage.setItem(
-        TOKEN_CACHE_KEY,
-        tokenData.access_token,
-      );
-
       activeAccessToken =
         tokenData.access_token;
+
+      writeTokenCache(
+        tokenData.access_token,
+        Number(
+          tokenData.expires_in,
+        ) ||
+          60 * 60,
+      );
+
+      clearOAuthCooldown();
 
       auth =
         await discordSdk.commands.authenticate({
@@ -358,26 +561,17 @@ export async function connectDiscord():
 
     return {
       user,
-
       guildId:
-        discordSdk.guildId ??
-        null,
-
+        contextGuildId,
       channelId:
-        discordSdk.channelId ??
-        null,
-
+        contextChannelId,
       accessToken:
         activeAccessToken,
-
       error: null,
     };
-
   } catch (error) {
     const message =
-      errorToText(
-        error,
-      );
+      errorToText(error);
 
     console.error(
       "Discord接続エラー:",
@@ -386,8 +580,10 @@ export async function connectDiscord():
 
     return {
       user: null,
-      guildId: null,
-      channelId: null,
+      guildId:
+        contextGuildId,
+      channelId:
+        contextChannelId,
       accessToken: null,
       error: message,
     };
@@ -398,9 +594,7 @@ export async function connectDiscord():
  * 同じActivityに参加している人
  * ======================================================= */
 
-export async function getDiscordParticipants():
-  Promise<DiscordParticipant[]> {
-
+export async function getDiscordParticipants(): Promise<DiscordParticipant[]> {
   if (!discordSdk) {
     return [];
   }
@@ -410,7 +604,10 @@ export async function getDiscordParticipants():
       await discordSdk.commands
         .getInstanceConnectedParticipants();
 
-    return (response.participants ?? []) as DiscordParticipant[];
+    return (
+      response.participants ??
+      []
+    ) as DiscordParticipant[];
   } catch (error) {
     console.warn(
       "参加者一覧を取得できませんでした。",
@@ -432,7 +629,6 @@ export function subscribeDiscordParticipants(
         DiscordParticipant[],
     ) => void,
 ): () => void {
-
   if (!discordSdk) {
     return () => {};
   }
@@ -474,7 +670,6 @@ export async function updateKotobaruPresence(
   presence:
     KotobaruPresence,
 ): Promise<void> {
-
   if (!discordSdk) {
     return;
   }
@@ -504,9 +699,6 @@ export async function updateKotobaruPresence(
       },
     });
   } catch (error) {
-    /*
-     * Rich Presenceが使えなくてもゲームには影響させません。
-     */
     console.warn(
       "Discordの挑戦状況表示を更新できませんでした。",
       errorToText(error),
