@@ -1512,6 +1512,84 @@ export default function App() {
       answer,
     ]);
 
+  const requestPreviewSync = async (
+    sync: {
+      guildId: string;
+      date: string;
+      puzzleNumber: number;
+      sessionId: string;
+    },
+    allowRetry = true,
+  ) => {
+    try {
+      const response =
+        await fetch(
+          '/api/kotobaru/preview-sync',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
+            body:
+              JSON.stringify(sync),
+          },
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(
+            () => ({
+              ok: false,
+              updated: false,
+            }),
+          ) as {
+            ok?: boolean;
+            updated?: boolean;
+          };
+
+      if (
+        response.ok &&
+        data.updated
+      ) {
+        console.log(
+          'ことばルPreview同期成功',
+        );
+        return true;
+      }
+
+      console.warn(
+        'ことばルPreview同期は保留されました:',
+        response.status,
+        data,
+      );
+    } catch (error) {
+      console.warn(
+        'ことばルPreview同期通信失敗:',
+        error,
+      );
+    }
+
+    /*
+     * DiscordやRenderが一時的に不調でもD1保存は完了しています。
+     * 即時連打はせず、45秒後に1度だけ後追いします。
+     */
+    if (allowRetry) {
+      window.setTimeout(
+        () => {
+          void requestPreviewSync(
+            sync,
+            false,
+          );
+        },
+        45_000,
+      );
+    }
+
+    return false;
+  };
+
   /* =========================================================
    * Discordチャンネルへ途中経過を反映
    *
@@ -1654,26 +1732,13 @@ export default function App() {
          * Render/Discordが制限中でもゲームデータは失いません。
          */
         if (stored.sessionId) {
-          void fetch(
-            '/api/kotobaru/preview-sync',
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type':
-                  'application/json',
-              },
-              body:
-                JSON.stringify({
-                  guildId,
-                  date: dateKey,
-                  puzzleNumber: number,
-                  sessionId:
-                    stored.sessionId,
-                }),
-            },
-          ).catch(
-            () => null,
-          );
+          void requestPreviewSync({
+            guildId,
+            date: dateKey,
+            puzzleNumber: number,
+            sessionId:
+              stored.sessionId,
+          });
         }
       } catch (error) {
         console.warn(
@@ -1883,26 +1948,13 @@ export default function App() {
             );
 
             if (stored.sessionId) {
-              void fetch(
-                '/api/kotobaru/preview-sync',
-                {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type':
-                      'application/json',
-                  },
-                  body:
-                    JSON.stringify({
-                      guildId,
-                      date: dateKey,
-                      puzzleNumber: number,
-                      sessionId:
-                        stored.sessionId,
-                    }),
-                },
-              ).catch(
-                () => null,
-              );
+              void requestPreviewSync({
+                guildId,
+                date: dateKey,
+                puzzleNumber: number,
+                sessionId:
+                  stored.sessionId,
+              });
             }
 
             return;
