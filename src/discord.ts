@@ -370,7 +370,7 @@ async function ensureKotobaruSession(
   try {
     const response =
       await fetch(
-        "/data/session",
+        "/kdata/session",
         {
           method: "POST",
           headers: {
@@ -664,7 +664,7 @@ export async function connectDiscord(): Promise<DiscordConnection> {
 
       const tokenResponse =
         await fetch(
-          "/data/oauth/token",
+          "/kdata/oauth/token",
           {
             method: "POST",
             headers: {

@@ -682,19 +682,42 @@ export default function App() {
    * ======================================================= */
 
   useEffect(() => {
+    const fetchRequiredText = async (
+      url: string,
+      label: string,
+    ) => {
+      const response =
+        await fetch(url, {
+          cache: 'no-store',
+        });
+
+      if (!response.ok) {
+        throw new Error(
+          `${label} の取得に失敗しました (HTTP ${response.status})`,
+        );
+      }
+
+      const text =
+        await response.text();
+
+      if (!text.trim()) {
+        throw new Error(
+          `${label} が空です`,
+        );
+      }
+
+      return text;
+    };
+
     Promise.all([
-      fetch(
+      fetchRequiredText(
         './data/A_data_new.csv',
-      ).then(
-        (response) =>
-          response.text(),
+        '辞書データ',
       ),
 
-      fetch(
+      fetchRequiredText(
         './data/Q_fil_ippan.csv',
-      ).then(
-        (response) =>
-          response.text(),
+        '問題データ',
       ),
     ])
       .then(
@@ -721,10 +744,21 @@ export default function App() {
             ),
           );
 
-          setAnswers(
+          const parsedAnswers =
             parseAnswerCsv(
               answerText,
-            ),
+            );
+
+          if (
+            parsedAnswers.length === 0
+          ) {
+            throw new Error(
+              '問題データを読み込めましたが、5文字の問題が1件もありません。URL MappingやCSV内容を確認してください。',
+            );
+          }
+
+          setAnswers(
+            parsedAnswers,
           );
         },
       )
@@ -1089,7 +1123,7 @@ export default function App() {
           try {
             const response =
               await fetch(
-                '/data/state',
+                '/kdata/state',
                 {
                   method:
                     'POST',
@@ -1539,7 +1573,7 @@ export default function App() {
       try {
         const response =
           await fetch(
-            '/data/progress',
+            '/kdata/progress',
             {
               method:
                 'POST',
@@ -1813,7 +1847,7 @@ export default function App() {
         try {
           const response =
             await fetch(
-              '/data/result',
+              '/kdata/result',
               {
                 method:
                   'POST',
@@ -2216,7 +2250,7 @@ export default function App() {
       <main className="app">
         <div className="loading">
           {!answer
-            ? 'ことばを準備しています…'
+            ? (message || 'ことばを準備しています…')
             : '前回の続きがないか確認しています…'}
         </div>
       </main>
