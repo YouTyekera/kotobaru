@@ -453,51 +453,27 @@ async function ensureKotobaruSession(
   }
 }
 
-/* =========================================================
- * Render起床 + 日次集計確認
- *
- * 重要：OAuthより先に呼びます。
- * OAuthが429でも、昨日の結果公開や起動カード整理を止めません。
- * ======================================================= */
-
-async function notifyBackendAwake(
-  guildId:
-    string | null,
-  channelId:
-    string | null,
-): Promise<void> {
-  if (!guildId) {
-    return;
-  }
-
-  try {
-    const response =
-      await fetch(
-        "/api/kotobaru/awake",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body:
-            JSON.stringify({
-              guildId,
-              channelId,
-            }),
-        },
-      );
-
-    console.log(
-      "ことばル起動確認:",
-      response.status,
-    );
-  } catch (error) {
-    console.warn(
-      "起動確認通信失敗:",
-      errorToText(error),
-    );
-  }
+/* 起動の後処理は、ゲーム画面・認証結果を待たせずに実行する。 */
+function notifyKotobaruAwake(
+  guildId: string | null,
+  channelId: string | null,
+  sessionToken: string | null,
+): void {
+  if (!guildId || !sessionToken) return;
+  const options = {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
+    body: JSON.stringify({ guildId, channelId }),
+  };
+  void fetch("/kdata/launch-awake", { ...options, signal: AbortSignal.timeout(8000) })
+    .then((response) => {
+      if (!response.ok) console.warn("ことばル招待整理の受付失敗:", response.status);
+    }).catch((error) => console.warn("ことばル招待整理の受付通信失敗:", errorToText(error)));
+  void fetch("/api/kotobaru/awake", { ...options, signal: AbortSignal.timeout(75000) })
+    .then((response) => {
+      if (!response.ok) console.warn("ことばルPreview起動確認の受付失敗:", response.status);
+    })
+    .catch((error) => console.warn("ことばルPreview起動確認通信失敗:", errorToText(error)));
 }
 
 /* =========================================================
@@ -601,14 +577,11 @@ export async function connectDiscord(): Promise<DiscordConnection> {
       discordSdk.channelId ??
       null;
 
-    /*
-     * OAuthより先にRenderを起こします。
-     * これにより429でも日次集計は実行できます。
-     */
-    void notifyBackendAwake(
-      contextGuildId,
-      contextChannelId,
-    );
+    // 保存済みセッションがあればOAuth前に後処理を開始する。
+    const cachedLaunchSession = readKotobaruSession(contextGuildId);
+    if (cachedLaunchSession) {
+      notifyKotobaruAwake(contextGuildId, contextChannelId, cachedLaunchSession.sessionToken);
+    }
 
     let auth =
       await authenticateWithCachedToken();
@@ -767,6 +740,10 @@ export async function connectDiscord(): Promise<DiscordConnection> {
         activeAccessToken,
         user,
       );
+
+    if (!cachedLaunchSession && dataSession) {
+      notifyKotobaruAwake(contextGuildId, contextChannelId, dataSession.sessionToken);
+    }
 
     return {
       user:
